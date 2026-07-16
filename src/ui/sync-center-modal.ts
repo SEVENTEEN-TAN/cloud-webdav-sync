@@ -1,4 +1,4 @@
-import { App, Modal, Notice } from "obsidian";
+import { App, ConfirmationModal, Modal, Notice } from "obsidian";
 import type { SyncState } from "../core";
 import type { LogEntry, SyncHistoryEntry } from "../logging";
 import type { ConflictChoice, PendingChange } from "../sync";
@@ -26,6 +26,7 @@ export interface SyncCenterSnapshot {
 export interface SyncCenterController {
   getSnapshot(): SyncCenterSnapshot;
   runManualSync(): Promise<void>;
+  clearRemoteLock(): Promise<void>;
   openConflictResolver(): void;
   copyDiagnostics(): Promise<void>;
 }
@@ -141,12 +142,38 @@ export class SyncCenterModal extends Modal {
 
   private renderOverview(container: HTMLElement, snapshot: SyncCenterSnapshot): void {
     const section = container.createDiv({ cls: "webdav-sync-section" });
+    const latest = snapshot.history.at(-1);
     section.createEl("h3", { text: "同步概览" });
     section.createEl("p", {
       text: snapshot.realSyncEnabled
         ? "已启用真实同步。插件会在提交前校验远程状态，并在冲突时暂停后续自动同步。"
         : "当前为仅规划模式：会检查远程仓库和生成同步计划，但不会改动本地或远程内容。",
     });
+
+    if (isHeadLockRetryFailure(snapshot, latest)) {
+      const callout = section.createDiv({ cls: "webdav-sync-callout is-warning" });
+      callout.createEl("strong", { text: "远程 HEAD 或同步锁连续变化" });
+      callout.createSpan({ text: "请先确认其他设备已经停止同步；确认后可以清除远程锁并立即重试。" });
+      const button = callout.createEl("button", { text: "清除锁并重试", cls: "mod-warning" });
+      button.addEventListener("click", () => {
+        void confirmAction(
+          this.app,
+          "清除远程同步锁",
+          "请仅在其他所有设备均已停止同步后继续。清除锁后将立即重新运行同步检查。",
+          "清除锁并重试",
+        ).then((confirmed) => {
+          if (!confirmed) return;
+          button.disabled = true;
+          void this.controller.clearRemoteLock()
+            .then(() => this.controller.runManualSync())
+            .then(() => this.render())
+            .catch((error: unknown) => {
+              new Notice(`清除锁或重试失败：${formatError(error)}`, 10_000);
+              this.render();
+            });
+        });
+      });
+    }
 
     if (snapshot.conflicts.length > 0) {
       const callout = section.createDiv({ cls: "webdav-sync-callout is-error" });
@@ -172,7 +199,6 @@ export class SyncCenterModal extends Modal {
       callout.createSpan({ text: "请在“能力”页查看 WebDAV 检测结果和警告。" });
     }
 
-    const latest = snapshot.history.at(-1);
     const recent = section.createDiv({ cls: "webdav-sync-overview-detail" });
     recent.createSpan({ text: "最近一次同步" });
     recent.createEl("strong", {
@@ -398,6 +424,35 @@ function yesNo(value: boolean): string {
   return value ? "是" : "否";
 }
 
+function isHeadLockRetryFailure(
+  snapshot: SyncCenterSnapshot,
+  latest: SyncHistoryEntry | undefined,
+): boolean {
+  if (snapshot.state !== "error" || latest?.outcome !== "error") return false;
+  return latest.message.includes("远程 HEAD") || latest.message.includes("同步锁");
+}
+
 function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function confirmAction(app: App, title: string, message: string, confirmText: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const modal = new ConfirmationModal(app)
+      .setTitle(title)
+      .setContent(message)
+      .addCancelButton("取消")
+      .addButton((button) => button
+        .setButtonText(confirmText)
+        .setDestructive()
+        .onClick(() => {
+          settled = true;
+          resolve(true);
+        }));
+    modal.setCloseCallback(() => {
+      if (!settled) resolve(false);
+    });
+    modal.open();
+  });
 }

@@ -167,6 +167,30 @@ export class WebDavSyncSettingTab extends PluginSettingTab {
         }));
 
     new Setting(this.containerEl)
+      .setName("远程 HEAD 最大重试次数")
+      .setDesc("提交期间远程 HEAD 或同步锁发生竞争时，最多重新规划并重试多少次（1～20）。")
+      .addText((text) => text
+        .setValue(String(this.owner.settings.headUpdateMaxRetries))
+        .onChange((value) => {
+          const retries = Number(value);
+          if (Number.isInteger(retries) && retries >= 1 && retries <= 20) {
+            this.saveSetting({ headUpdateMaxRetries: retries });
+          }
+        }));
+
+    new Setting(this.containerEl)
+      .setName("远程 HEAD 重试间隔")
+      .setDesc("两次远程 HEAD 重试之间等待多少秒。设为 0 可立即重试。")
+      .addText((text) => text
+        .setValue(String(this.owner.settings.headUpdateRetryDelayMs / 1_000))
+        .onChange((value) => {
+          const seconds = Number(value);
+          if (Number.isFinite(seconds) && seconds >= 0) {
+            this.saveSetting({ headUpdateRetryDelayMs: seconds * 1_000 });
+          }
+        }));
+
+    new Setting(this.containerEl)
       .setName("启用实际同步")
       .setDesc("实验性功能：允许上传和下载仓库内容、将删除的文件安全移至 .trash，以及自动合并无冲突的 Markdown。")
       .addToggle((toggle) => toggle

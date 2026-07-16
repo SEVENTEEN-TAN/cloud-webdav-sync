@@ -460,7 +460,9 @@ export default class WebDavSyncPlugin extends Plugin implements SettingsControll
       );
       this.assertRunConfiguration(revision);
       if (syncResult.status === "retry") {
-        throw new Error("远程 HEAD 连续发生变化，请重新运行同步。");
+        throw new Error(
+          "远程 HEAD 或同步锁连续发生变化。请确认其他设备已停止同步；如确认没有其他设备正在同步，可在同步中心清除远程同步锁后重试。",
+        );
       }
       if (syncResult.status === "conflict") {
         this.captureConflicts(syncResult);
@@ -567,10 +569,18 @@ export default class WebDavSyncPlugin extends Plugin implements SettingsControll
     });
 
     let result: RepositorySyncResult = { status: "retry", state: this.syncSession };
-    for (let attempt = 0; attempt < 3; attempt += 1) {
+    for (let attempt = 0; attempt < settings.headUpdateMaxRetries; attempt += 1) {
       result = await engine.sync(this.syncSession, this.conflictResolutions);
       if (result.status !== "retry") return result;
-      this.log.warn("提交期间远程 HEAD 已变化，正在重新规划。", { attempt: attempt + 1 });
+      this.log.warn("提交期间远程 HEAD 或同步锁已变化，正在重新规划。", {
+        attempt: attempt + 1,
+        maxRetries: settings.headUpdateMaxRetries,
+        retryDelayMs: settings.headUpdateRetryDelayMs,
+      });
+      if (attempt + 1 < settings.headUpdateMaxRetries && settings.headUpdateRetryDelayMs > 0) {
+        await sleep(settings.headUpdateRetryDelayMs);
+        this.assertRunConfiguration(revision);
+      }
     }
     return result;
   }
@@ -789,6 +799,10 @@ function formatProgressPercent(progress: SyncProgress): number {
 
 function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function sleep(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }
 
 function describeHeadUpdateStrategy(strategy: HeadUpdateStrategy): string {

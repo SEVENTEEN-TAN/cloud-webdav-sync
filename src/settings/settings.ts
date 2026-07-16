@@ -11,6 +11,8 @@ export interface WebDavSyncSettings {
   syncOnStartup: boolean;
   fileChangeDelayMs: number;
   remotePollMinutes: number;
+  headUpdateMaxRetries: number;
+  headUpdateRetryDelayMs: number;
   enableRealSync: boolean;
   transferConcurrency: number;
   initialSyncPolicy: InitialSyncPolicy;
@@ -25,6 +27,8 @@ export const DEFAULT_SETTINGS: Readonly<WebDavSyncSettings> = Object.freeze({
   syncOnStartup: true,
   fileChangeDelayMs: 10_000,
   remotePollMinutes: 5,
+  headUpdateMaxRetries: 3,
+  headUpdateRetryDelayMs: 1_000,
   enableRealSync: false,
   transferConcurrency: 4,
   initialSyncPolicy: "stop",
@@ -41,6 +45,11 @@ export function normalizeSettings(value: unknown): WebDavSyncSettings {
     syncOnStartup: readBoolean(input.syncOnStartup, DEFAULT_SETTINGS.syncOnStartup),
     fileChangeDelayMs: readPositiveNumber(input.fileChangeDelayMs, DEFAULT_SETTINGS.fileChangeDelayMs),
     remotePollMinutes: readPositiveNumber(input.remotePollMinutes, DEFAULT_SETTINGS.remotePollMinutes),
+    headUpdateMaxRetries: readBoundedInteger(input.headUpdateMaxRetries, DEFAULT_SETTINGS.headUpdateMaxRetries, 1, 20),
+    headUpdateRetryDelayMs: readNonNegativeNumber(
+      input.headUpdateRetryDelayMs,
+      DEFAULT_SETTINGS.headUpdateRetryDelayMs,
+    ),
     enableRealSync: readBoolean(input.enableRealSync, DEFAULT_SETTINGS.enableRealSync),
     transferConcurrency: readTransferConcurrency(input.transferConcurrency),
     initialSyncPolicy: readInitialSyncPolicy(input.initialSyncPolicy),
@@ -76,6 +85,16 @@ function readBoolean(value: unknown, fallback: boolean): boolean {
 
 function readPositiveNumber(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function readNonNegativeNumber(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : fallback;
+}
+
+function readBoundedInteger(value: unknown, fallback: number, minimum: number, maximum: number): number {
+  if (!Number.isInteger(value)) return fallback;
+  if ((value as number) < minimum) return fallback;
+  return Math.min(value as number, maximum);
 }
 
 function readTransferConcurrency(value: unknown): number {

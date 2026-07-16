@@ -4,7 +4,7 @@
 
 Cloud WebDAV Sync is an experimental sync plugin that stores notes and attachments in a WebDAV-backed repository. It uses content-addressed objects, validated commit snapshots, server capability checks, conflict detection, and a conflict resolution workspace to reduce accidental overwrites.
 
-Version `0.9.8` still defaults to planning-only mode. Real sync must be explicitly enabled in settings. When enabled, the plugin does not overwrite a plain remote folder file by file. Instead, it writes immutable SHA-256 blobs, verified commits, complete file trees, and a remote HEAD update strategy selected from the WebDAV server's detected capabilities.
+Version `0.9.9` still defaults to planning-only mode. Real sync must be explicitly enabled in settings. When enabled, the plugin does not overwrite a plain remote folder file by file. Instead, it writes immutable SHA-256 blobs, verified commits, complete file trees, and a remote HEAD update strategy selected from the WebDAV server's detected capabilities.
 
 ## Features
 
@@ -49,7 +49,7 @@ After building, copy or link `main.js`, `manifest.json`, and `styles.css` into a
 
 ## Release
 
-The `Build release package` GitHub Actions workflow can be triggered manually or by pushing a tag that exactly matches `manifest.json`'s version. For version `0.9.8`, use tag `0.9.8`, not `v0.9.8`.
+The `Build release package` GitHub Actions workflow can be triggered manually or by pushing a tag that exactly matches `manifest.json`'s version. For version `0.9.9`, use tag `0.9.9`, not `v0.9.9`.
 
 The workflow runs `npm ci` and `npm run build`, then uploads `main.js`, `manifest.json`, and `styles.css` directly as GitHub Release assets.
 
