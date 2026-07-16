@@ -1,8 +1,8 @@
-# Obsidian WebDAV Sync
+# 123Pan WebDAV Sync
 
 一个实验性的 Obsidian 插件，用于通过 WebDAV 安全地同步知识库（Vault）。
 
-版本 `0.9.0` 默认仍使用“仅规划”模式，并提供需要用户明确开启的实验性真实同步开关。真实同步不会直接逐文件覆盖 WebDAV 目录，而是使用不可变的 SHA-256 Blob、经过校验的 Commit、完整文件树，以及根据服务器能力选择的 HEAD 更新策略。正确实现条件 ETag 的服务器会使用比较并交换（compare-and-swap）；123Pan 等服务器则可使用经过主动探测验证的原子 `MOVE`/禁止覆盖租约。
+版本 `0.9.3` 默认仍使用“仅规划”模式，并提供需要用户明确开启的实验性真实同步开关。真实同步不会直接逐文件覆盖 WebDAV 目录，而是使用不可变的 SHA-256 Blob、经过校验的 Commit、完整文件树，以及根据服务器能力选择的 HEAD 更新策略。正确实现条件 ETag 的服务器会使用比较并交换（compare-and-swap）；123Pan 等服务器则可使用经过主动探测验证的原子 `MOVE`/禁止覆盖租约。
 
 ## 当前功能
 
@@ -15,7 +15,7 @@
 - 桌面端状态栏状态，以及跨平台的同步中心窗口。
 - 同步中心采用概览、待同步、历史、日志和能力分区；诊断信息不会再默认和操作流程混在同一页面。
 - 存在冲突时，点击桌面端底部状态栏会直接打开冲突解决工作台；可在多个冲突文件间切换、筛选并依次选择本地或远程版本。
-- Markdown 冲突工作台保留 BASE / LOCAL / REMOTE 完整文本于运行时内存，提供带行号的三栏差异高亮与同步滚动；所有可解决冲突都有选择后才能继续同步。
+- Markdown 冲突工作台保留 BASE / LOCAL / REMOTE 完整文本于运行时内存，界面展示本地和远程两栏差异高亮与同步滚动；所有可解决冲突都有选择后才能继续同步。
 - 有界内存日志，并对凭据和 Token 进行递归脱敏。
 - 通过 Obsidian SecretStorage（安全凭据存储）保存密码。
 - WebDAV 能力探测覆盖 OPTIONS、条件创建、MKCOL 排他性、原子 MOVE/禁止覆盖、通过 HEAD/PROPFIND 获取 ETag、过期 ETag 拒绝，以及清理结果验证。
@@ -38,7 +38,7 @@
 - Windows 文件系统集成测试覆盖真实磁盘上的首次拉取、文件变文件夹、文件夹变文件，以及最终文件树收敛。
 - 每次同步使用不可变的配置快照，并在安全检查点确认配置未变化，防止旧任务在设置变化后继续更新远程 HEAD 或开始拉取。
 - 等待用户解决冲突时暂停自动触发；应用远程修改所产生的 Vault 事件不会重新加入待同步队列。
-- 同步中心提供可响应布局的 BASE/LOCAL/REMOTE 冲突内容对比区域。
+- 同步中心提供可响应布局的本地/远程冲突内容对比区域。
 
 ## 安全边界
 
@@ -58,7 +58,13 @@ npm run check
 npm run build
 ```
 
-构建成功后会生成 `main.js`。如需在 Obsidian 中测试，请将 `main.js`、`manifest.json` 和 `styles.css` 复制或链接到知识库中名为 `webdav-sync` 的插件文件夹。
+构建成功后会生成 `main.js`。如需在 Obsidian 中测试，请将 `main.js`、`manifest.json` 和 `styles.css` 复制或链接到知识库中名为 `123pan-webdav-sync` 的插件文件夹。
+
+## 发布
+
+GitHub Actions 中的 `Build release package` 可以手动触发，也会在推送与 `manifest.json` 版本完全一致的 tag 时触发。例如版本 `0.9.3` 应使用 tag `0.9.3`，不要使用 `v0.9.3`。
+
+发布流程会运行 `npm ci`、`npm run build`，然后将 `main.js`、`manifest.json` 和 `styles.css` 打包为 `123pan-webdav-sync-<version>.zip` 并上传到对应 GitHub Release。
 
 ## 源码结构
 

@@ -1,6 +1,6 @@
 {
-  "name": "obsidian-webdav-sync",
-  "version": "0.9.2",
+  "name": "123pan-webdav-sync",
+  "version": "0.9.3",
   "description": "Reliable WebDAV synchronization foundations for Obsidian.",
   "type": "module",
   "private": true,
