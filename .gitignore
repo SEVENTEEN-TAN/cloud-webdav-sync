@@ -1,0 +1,11 @@
+node_modules/
+main.js
+*.map
+.DS_Store
+coverage/
+test-artifacts/
+test-vault/
+*.zip
+*.log
+.env
+.env.*

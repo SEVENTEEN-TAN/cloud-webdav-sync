@@ -1,0 +1,23 @@
+{
+  "name": "obsidian-webdav-sync",
+  "version": "0.9.2",
+  "description": "Reliable WebDAV synchronization foundations for Obsidian.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "node esbuild.config.mjs production",
+    "dev": "node esbuild.config.mjs",
+    "test": "tsx --test tests/**/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run test && npm run typecheck && node --check esbuild.config.mjs",
+    "smoke:webdav": "tsx scripts/real-webdav-smoke.ts",
+    "probe:webdav-primitives": "tsx scripts/real-webdav-primitives.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "esbuild": "^0.25.0",
+    "obsidian": "^1.13.1",
+    "tsx": "^4.20.0",
+    "typescript": "^5.8.0"
+  }
+}

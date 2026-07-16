@@ -1,0 +1,71 @@
+name: Build release package
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Read package version
+        id: version
+        run: |
+          version=$(node -p "require('./manifest.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "package_name=webdav-sync-$version.zip" >> "$GITHUB_OUTPUT"
+
+      - name: Create plugin zip
+        run: zip -9 "${{ steps.version.outputs.package_name }}" main.js manifest.json styles.css
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: webdav-sync-${{ steps.version.outputs.version }}
+          path: ${{ steps.version.outputs.package_name }}
+          if-no-files-found: error
+
+      - name: Publish GitHub release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+          PACKAGE_NAME: ${{ steps.version.outputs.package_name }}
+        run: |
+          if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+            tag="${GITHUB_REF_NAME}"
+          else
+            tag="v${VERSION}"
+            if ! git ls-remote --tags origin "refs/tags/${tag}" | grep -q "refs/tags/${tag}"; then
+              git config user.name "github-actions[bot]"
+              git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+              git tag "${tag}"
+              git push origin "${tag}"
+            fi
+          fi
+
+          if gh release view "${tag}" >/dev/null 2>&1; then
+            gh release upload "${tag}" "${PACKAGE_NAME}" --clobber
+          else
+            gh release create "${tag}" "${PACKAGE_NAME}" --title "${tag}" --notes "Automated build for ${tag}."
+          fi
