@@ -39,13 +39,6 @@ jobs:
       - name: Create plugin zip
         run: zip -9 "${{ steps.version.outputs.package_name }}" main.js manifest.json styles.css
 
-      - name: Upload workflow artifact
-        uses: actions/upload-artifact@v5
-        with:
-          name: webdav-sync-${{ steps.version.outputs.version }}
-          path: ${{ steps.version.outputs.package_name }}
-          if-no-files-found: error
-
       - name: Publish GitHub release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
