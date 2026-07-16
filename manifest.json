@@ -1,9 +1,9 @@
 {
   "id": "cloud-webdav-sync",
   "name": "Cloud WebDAV Sync",
-  "version": "0.9.4",
-  "minAppVersion": "1.11.4",
-  "description": "通过支持冲突处理和内容寻址的 WebDAV 仓库同步 Obsidian 知识库。",
+  "version": "0.9.5",
+  "minAppVersion": "1.13.1",
+  "description": "Sync notes and attachments through WebDAV with conflict handling and content-addressed storage.",
   "author": "WebDAV Sync contributors",
   "isDesktopOnly": false
 }

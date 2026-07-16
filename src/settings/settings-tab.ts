@@ -19,7 +19,9 @@ export class WebDavSyncSettingTab extends PluginSettingTab {
 
   display(): void {
     this.containerEl.empty();
-    this.containerEl.createEl("h2", { text: "WebDAV 同步" });
+    new Setting(this.containerEl)
+      .setName("WebDAV 同步")
+      .setHeading();
     this.renderConnectionSettings();
     this.renderAutomationSettings();
   }
@@ -120,7 +122,9 @@ export class WebDavSyncSettingTab extends PluginSettingTab {
   }
 
   private renderAutomationSettings(): void {
-    this.containerEl.createEl("h3", { text: "自动同步" });
+    new Setting(this.containerEl)
+      .setName("自动同步")
+      .setHeading();
 
     new Setting(this.containerEl)
       .setName("启用自动同步")

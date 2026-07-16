@@ -1,8 +1,10 @@
 # Cloud WebDAV Sync
 
+Cloud WebDAV Sync is an experimental sync plugin that stores notes and attachments in a WebDAV-backed repository. It uses content-addressed objects, commit snapshots, capability checks, conflict detection, and a conflict resolution workspace to reduce accidental overwrites.
+
 一个实验性的 Obsidian 插件，用于通过 WebDAV 安全地同步知识库（Vault）。
 
-版本 `0.9.4` 默认仍使用“仅规划”模式，并提供需要用户明确开启的实验性真实同步开关。真实同步不会直接逐文件覆盖 WebDAV 目录，而是使用不可变的 SHA-256 Blob、经过校验的 Commit、完整文件树，以及根据服务器能力选择的 HEAD 更新策略。正确实现条件 ETag 的服务器会使用比较并交换（compare-and-swap）；部分云盘 WebDAV 服务则可使用经过主动探测验证的原子 `MOVE`/禁止覆盖租约。
+版本 `0.9.5` 默认仍使用“仅规划”模式，并提供需要用户明确开启的实验性真实同步开关。真实同步不会直接逐文件覆盖 WebDAV 目录，而是使用不可变的 SHA-256 Blob、经过校验的 Commit、完整文件树，以及根据服务器能力选择的 HEAD 更新策略。正确实现条件 ETag 的服务器会使用比较并交换（compare-and-swap）；部分云盘 WebDAV 服务则可使用经过主动探测验证的原子 `MOVE`/禁止覆盖租约。
 
 ## 当前功能
 
@@ -62,9 +64,9 @@ npm run build
 
 ## 发布
 
-GitHub Actions 中的 `Build release package` 可以手动触发，也会在推送与 `manifest.json` 版本完全一致的 tag 时触发。例如版本 `0.9.4` 应使用 tag `0.9.4`，不要使用 `v0.9.4`。
+GitHub Actions 中的 `Build release package` 可以手动触发，也会在推送与 `manifest.json` 版本完全一致的 tag 时触发。例如版本 `0.9.5` 应使用 tag `0.9.5`，不要使用 `v0.9.5`。
 
-发布流程会运行 `npm ci`、`npm run build`，然后将 `main.js`、`manifest.json` 和 `styles.css` 打包为 `cloud-webdav-sync-<version>.zip` 并上传到对应 GitHub Release。
+发布流程会运行 `npm ci`、`npm run build`，然后将 `main.js`、`manifest.json` 和 `styles.css` 作为 GitHub Release 附件直接上传。
 
 ## 源码结构
 

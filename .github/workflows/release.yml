@@ -34,16 +34,11 @@ jobs:
         run: |
           version=$(node -p "require('./manifest.json').version")
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "package_name=cloud-webdav-sync-$version.zip" >> "$GITHUB_OUTPUT"
-
-      - name: Create plugin zip
-        run: zip -9 "${{ steps.version.outputs.package_name }}" main.js manifest.json styles.css
 
       - name: Publish GitHub release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
-          PACKAGE_NAME: ${{ steps.version.outputs.package_name }}
         run: |
           if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
             tag="${GITHUB_REF_NAME}"
@@ -62,7 +57,7 @@ jobs:
           fi
 
           if gh release view "${tag}" >/dev/null 2>&1; then
-            gh release upload "${tag}" "${PACKAGE_NAME}" --clobber
+            gh release upload "${tag}" main.js manifest.json styles.css --clobber
           else
-            gh release create "${tag}" "${PACKAGE_NAME}" --title "${tag}" --notes "Automated build for ${tag}."
+            gh release create "${tag}" main.js manifest.json styles.css --title "${tag}" --notes "Automated build for ${tag}."
           fi
