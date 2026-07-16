@@ -1,6 +1,6 @@
 {
   "name": "cloud-webdav-sync",
-  "version": "0.9.5",
+  "version": "0.9.6",
   "description": "Reliable WebDAV synchronization foundations for Obsidian.",
   "type": "module",
   "private": true,

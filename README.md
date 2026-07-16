@@ -1,58 +1,43 @@
 # Cloud WebDAV Sync
 
-Cloud WebDAV Sync is an experimental sync plugin that stores notes and attachments in a WebDAV-backed repository. It uses content-addressed objects, commit snapshots, capability checks, conflict detection, and a conflict resolution workspace to reduce accidental overwrites.
+[中文说明](README.zh-CN.md)
 
-一个实验性的 Obsidian 插件，用于通过 WebDAV 安全地同步知识库（Vault）。
+Cloud WebDAV Sync is an experimental sync plugin that stores notes and attachments in a WebDAV-backed repository. It uses content-addressed objects, validated commit snapshots, server capability checks, conflict detection, and a conflict resolution workspace to reduce accidental overwrites.
 
-版本 `0.9.5` 默认仍使用“仅规划”模式，并提供需要用户明确开启的实验性真实同步开关。真实同步不会直接逐文件覆盖 WebDAV 目录，而是使用不可变的 SHA-256 Blob、经过校验的 Commit、完整文件树，以及根据服务器能力选择的 HEAD 更新策略。正确实现条件 ETag 的服务器会使用比较并交换（compare-and-swap）；部分云盘 WebDAV 服务则可使用经过主动探测验证的原子 `MOVE`/禁止覆盖租约。
+Version `0.9.6` still defaults to planning-only mode. Real sync must be explicitly enabled in settings. When enabled, the plugin does not overwrite a plain remote folder file by file. Instead, it writes immutable SHA-256 blobs, verified commits, complete file trees, and a remote HEAD update strategy selected from the WebDAV server's detected capabilities.
 
-## 当前功能
+## Features
 
-- Obsidian 左侧 Ribbon 始终显示“刷新同步”图标；点击该图标会立即发起一次手动同步检查，不会打开设置页面。
-- 命令面板提供检查同步、打开同步中心和重新扫描知识库等操作。
-- Obsidian 运行期间，可在本地文件变化后、启动时、重新回到前台时，以及按可配置的时间间隔自动检查同步。
-- 当前服务器配置的连接能力会被缓存；URL、远程文件夹、用户名或密码变化时缓存自动失效，避免每次自动同步都执行会创建临时资源的完整能力探测。
-- 单航班调度（single-flight）：完整同步任务不会重叠；同步期间收到的新请求会合并为任务完成后的一次后续同步。
-- 本地待同步队列可合并新建、修改、删除和重命名事件。
-- 桌面端状态栏状态，以及跨平台的同步中心窗口。
-- 同步中心采用概览、待同步、历史、日志和能力分区；诊断信息不会再默认和操作流程混在同一页面。
-- 存在冲突时，点击桌面端底部状态栏会直接打开冲突解决工作台；可在多个冲突文件间切换、筛选并依次选择本地或远程版本。
-- Markdown 冲突工作台保留 BASE / LOCAL / REMOTE 完整文本于运行时内存，界面展示本地和远程两栏差异高亮与同步滚动；所有可解决冲突都有选择后才能继续同步。
-- 有界内存日志，并对凭据和 Token 进行递归脱敏。
-- 通过 Obsidian SecretStorage（安全凭据存储）保存密码。
-- WebDAV 能力探测覆盖 OPTIONS、条件创建、MKCOL 排他性、原子 MOVE/禁止覆盖、通过 HEAD/PROPFIND 获取 ETag、过期 ETag 拒绝，以及清理结果验证。
-- 支持首次将本地知识库推送到空仓库，以及空设备从远程拉取知识库。
-- 基于 BASE/LOCAL/REMOTE 文件树进行双向同步规划。
-- 对无重叠修改的 Markdown 执行三方合并，不向文件写入冲突标记。
-- 并发修改二进制文件时，通过确定性的冲突副本名称保留两个版本。
-- 对哈希计算、上传和下载设置有界并发；小文件会自动合并为内容寻址的 Pack 文件上传，减少 WebDAV 小文件请求数量，同时保留单文件级差异和冲突处理。
-- 检查仓库标识，校验 Commit/Blob 完整性，并阻止大规模删除。
-- 同步知识库中的笔记和附件；实验版本中默认排除 `.obsidian`、`.trash` 和 `.git`，并支持在设置中手动添加排除目录列表。
-- 对 Markdown 重叠修改、双方新增和删除/修改冲突，可在同步中心选择保留本地或远程版本。选择会绑定到三个版本的准确 Blob 标识；冲突内容发生变化后，旧选择会被忽略。
-- 持久化保存有界同步历史；复制诊断报告时会对知识库路径进行哈希处理，并省略笔记内容摘录。
-- 远程服务器强制使用 HTTPS；仅本地主机开发环境允许使用 HTTP。
-- 可在设置中忘记本地仓库绑定，而不会删除知识库或 WebDAV 数据。
-- 提供需要明确确认的紧急操作：在所有其他设备均已停止同步后，手动清除遗留的远程同步锁。
-- 首次同步时，如果本地和远程都包含文件，可选择安全停止、使用远程内容，或在远程历史之上提交本地内容。
-- 应用远程数据时，在写入和删除前比较文件状态；如果文件在此期间发生变化，则中止操作。
-- 使用持久化的 pending-apply 日志，在多文件拉取或合并中断后继续应用同一个目标 Commit；恢复期间如果文件被编辑，则拒绝覆盖。
-- 安全处理文件变文件夹、文件夹变文件的路径形态转换：创建新路径前，先删除已经校验的阻塞文件和空文件夹。
-- Windows 文件系统集成测试覆盖真实磁盘上的首次拉取、文件变文件夹、文件夹变文件，以及最终文件树收敛。
-- 每次同步使用不可变的配置快照，并在安全检查点确认配置未变化，防止旧任务在设置变化后继续更新远程 HEAD 或开始拉取。
-- 等待用户解决冲突时暂停自动触发；应用远程修改所产生的 Vault 事件不会重新加入待同步队列。
-- 同步中心提供可响应布局的本地/远程冲突内容对比区域。
+- Ribbon command for running a manual sync check.
+- Command palette actions for checking sync, opening the sync center, and rescanning the vault.
+- Automatic checks while the app is running, including startup, foreground resume, local file changes, and configurable remote polling.
+- Cached WebDAV capability reports that are invalidated when the URL, remote folder, username, or password changes.
+- Single-flight scheduling so full sync jobs do not overlap.
+- Local change queue coalescing for create, modify, delete, and rename events.
+- Desktop status bar state and a cross-platform sync center.
+- Sync center sections for overview, pending changes, history, logs, and server capabilities.
+- Conflict workflow for switching between files, filtering unresolved items, and choosing the local or remote version.
+- Markdown conflict preview with line numbers, local/remote comparison, diff highlighting, and synchronized scrolling.
+- Bounded in-memory logs with recursive credential and token redaction.
+- Password storage through the app's SecretStorage API instead of plugin `data.json`.
+- WebDAV capability probes for OPTIONS, conditional create, exclusive MKCOL, atomic MOVE/no-overwrite behavior, ETag reads through HEAD/PROPFIND, stale ETag rejection, and cleanup verification.
+- First-device push to an empty repository and empty-device pull from an existing repository.
+- Two-way planning from BASE, LOCAL, and REMOTE file trees.
+- Three-way Markdown merge for non-overlapping edits without writing conflict markers into notes.
+- Deterministic conflict copies for concurrently modified binary files.
+- Bounded hashing, upload, and download concurrency; small files may be packed into content-addressed pack files to reduce WebDAV request counts.
+- Repository identity checks, commit/blob integrity validation, and large-delete protection.
+- Safe handling for file-to-folder and folder-to-file path shape changes.
 
-## 安全边界
+## Safety Model
 
-真实同步默认关闭。在“仅规划”模式中，能力测试只会在配置的远程文件夹内创建一个随机命名的临时 Collection，并通过 `finally` 清理路径将其删除。
+Real sync is disabled by default. In planning-only mode, the connection test creates a randomly named temporary collection inside the configured remote folder and removes it in a `finally` cleanup path.
 
-首次配置连接时，如果设置的远程文件夹尚不存在，插件会从 WebDAV 根目录开始，按路径层级自动创建缺失的 Collection。例如配置 `Obsidian/Personal/Notes` 时，会依次确保 `Obsidian`、`Obsidian/Personal` 和 `Obsidian/Personal/Notes` 存在；如果路径被同名普通文件占用、服务器拒绝 MKCOL，或当前账户没有创建权限，连接仍会安全失败并报告错误。
+When real sync is enabled, remote data is stored as immutable repository objects. Remote deletes are applied locally by moving files to `.trash`. Markdown conflicts stop the current commit and keep both sides in the repository until the user chooses a version. Binary conflicts preserve the local file and save the remote side as a deterministic `.conflict-<device>-<commit>` copy.
 
-用户明确启用真实同步后，远程内容会保存为不可变的仓库对象。远程删除应用到本地时，文件会被移动到 Obsidian 的 `.trash` 文件夹。Markdown 编辑发生冲突时，本次 Commit 会停止，并在仓库中保留双方版本；二进制文件被并发修改时，本地版本保留在原路径，远程版本则另存为 `.conflict-<device>-<commit>` 副本。远程 HEAD 更新前会阻止大规模删除。
+Remote HEAD updates are guarded by server capability checks. Servers with correct conditional ETag behavior can use compare-and-swap updates. Servers that do not support that pattern can use an actively probed atomic MOVE/no-overwrite lease strategy.
 
-真实同步启用后，插件会自动初始化仓库子文件夹和元数据。对于忽略 `If-None-Match: *` 的 WebDAV 服务，初始化过程会通过探测验证过的原子 MOVE 租约串行执行，并回读不可变对象以校验完整性。
-
-## 开发
+## Development
 
 ```bash
 npm install
@@ -60,39 +45,38 @@ npm run check
 npm run build
 ```
 
-构建成功后会生成 `main.js`。如需在 Obsidian 中测试，请将 `main.js`、`manifest.json` 和 `styles.css` 复制或链接到知识库中名为 `cloud-webdav-sync` 的插件文件夹。
+After building, copy or link `main.js`, `manifest.json`, and `styles.css` into a plugin folder named `cloud-webdav-sync` inside your test vault.
 
-## 发布
+## Release
 
-GitHub Actions 中的 `Build release package` 可以手动触发，也会在推送与 `manifest.json` 版本完全一致的 tag 时触发。例如版本 `0.9.5` 应使用 tag `0.9.5`，不要使用 `v0.9.5`。
+The `Build release package` GitHub Actions workflow can be triggered manually or by pushing a tag that exactly matches `manifest.json`'s version. For version `0.9.6`, use tag `0.9.6`, not `v0.9.6`.
 
-发布流程会运行 `npm ci`、`npm run build`，然后将 `main.js`、`manifest.json` 和 `styles.css` 作为 GitHub Release 附件直接上传。
+The workflow runs `npm ci` and `npm run build`, then uploads `main.js`, `manifest.json`, and `styles.css` directly as GitHub Release assets.
 
-## 源码结构
+## Source Layout
 
 ```text
-src/core/       同步状态机
-src/sync/       调度与本地待同步更改
-src/logging/    有界且脱敏的诊断日志
-src/webdav/     传输层与能力探测
-src/settings/   设置模型与 Obsidian 设置页
-src/ui/         同步中心窗口
-src/main.ts     Obsidian 生命周期集成
-tests/          与平台无关的单元测试
+src/core/       Sync state machine
+src/sync/       Scheduling and local change queue
+src/logging/    Bounded redacted diagnostics
+src/webdav/     Transport and capability probing
+src/settings/   Settings model and settings tab
+src/ui/         Sync center and conflict UI
+src/main.ts     Plugin lifecycle integration
+tests/          Unit and integration tests
 ```
 
-## 平台限制
+## Limitations
 
-- 只有 Obsidian 处于运行状态时才会执行自动检查；Obsidian 关闭后，插件无法保证在操作系统后台继续同步。
-- Obsidian `requestUrl()` 仅提供完整请求的完成结果，不支持流式进度或 `AbortSignal`。未来界面可以显示文件级进度并停止尚未开始的队列任务，但无法保证立即取消已经发出的请求。
-- Obsidian 状态栏仅适用于桌面端。移动端使用 Ribbon、命令、通知和同步中心。
-- 持久化的传输并发上限为 16，移动端运行时会进一步限制为 2。哈希计算、上传和下载调度还会限制估算的在途字节预算（移动端 32 MiB、桌面端 256 MiB）；单个超出预算的大文件仍可在其他任务结束后独占执行。
+- Automatic checks only run while the app is running.
+- The app request API returns complete responses and does not support streaming progress or `AbortSignal`.
+- The status bar is desktop-only. Mobile uses ribbon actions, commands, notices, and the sync center.
+- The default transfer concurrency limit is 16; mobile runtime paths reduce it further.
+- First sync stops when the local vault and existing remote repository both contain unrelated files unless the user explicitly chooses an initial policy.
+- The conflict workflow supports local/remote selection, but does not yet provide a full manual merge editor.
+- Repository history exists as commits, but history browsing, rollback UI, garbage collection, and large-file chunking are not implemented yet.
+- Compatibility has been tested against real cloud WebDAV servers and Windows filesystem integration paths, but broader WebDAV server and mobile-device coverage still needs more validation.
 
-## 已知限制
+## License
 
-- 首次连接时，如果本地知识库与已有的远程仓库包含互不相关的数据，同步会停止，而不会自行选择可能造成破坏的一方。
-- 已支持选择本地或远程冲突版本，但尚未实现功能更完整的并排手动文本编辑器。
-- 同步尝试历史会在重启后保留；详细调试日志仍以有界形式保存在内存中。
-- 仓库历史以 Commit 形式存在，但历史浏览、回滚界面、垃圾回收和大文件分块尚未实现。仅用于恢复的本地快照 Commit 可能会在垃圾回收功能完成前保持不可达状态。
-- 已在真实云盘 WebDAV 服务器上通过临时目录能力探测、双设备推送/拉取、并发编辑合并、最终收敛和清理测试。Nextcloud、其他通用 WebDAV 服务以及真实移动设备的兼容性仍需进一步验证，当前版本不应视为稳定版本。
-- MOVE/MKCOL 租约留下遗留锁时，恢复操作会安全失败（fail closed）；为避免误删另一台设备刚创建的新锁，插件有意禁用自动删除遗留锁。停止其他所有设备后，可使用带警告和确认步骤的手动清理操作。
+MIT License. See [LICENSE](LICENSE).
