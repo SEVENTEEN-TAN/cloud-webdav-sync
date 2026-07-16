@@ -34,7 +34,7 @@ jobs:
         run: |
           version=$(node -p "require('./manifest.json').version")
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "package_name=123pan-webdav-sync-$version.zip" >> "$GITHUB_OUTPUT"
+          echo "package_name=cloud-webdav-sync-$version.zip" >> "$GITHUB_OUTPUT"
 
       - name: Create plugin zip
         run: zip -9 "${{ steps.version.outputs.package_name }}" main.js manifest.json styles.css
