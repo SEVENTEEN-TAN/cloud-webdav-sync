@@ -1,4 +1,4 @@
-import { TFile, TFolder, type Vault } from "obsidian";
+import { TFile, TFolder, type FileManager, type Vault } from "obsidian";
 import { mapLimitWeighted } from "../concurrency";
 import { sha256Hex, type RepositoryTree } from "../repository";
 import type { LocalWorkspace, ScanProgressReporter } from "../sync/repository-sync-engine";
@@ -6,6 +6,7 @@ import type { LocalWorkspace, ScanProgressReporter } from "../sync/repository-sy
 export class ObsidianWorkspace implements LocalWorkspace {
   constructor(
     private readonly vault: Vault,
+    private readonly fileManager: FileManager,
     private readonly shouldTrack: (path: string) => boolean,
     private readonly concurrency = 4,
     private readonly onMutation: (path: string, active: boolean) => void = () => undefined,
@@ -100,7 +101,7 @@ export class ObsidianWorkspace implements LocalWorkspace {
       if (!equalBytes(current, expectedCurrent)) {
         throw new Error(`Local file ${path} changed while synchronization was applying a delete.`);
       }
-      await this.vault.trash(file, false);
+      await this.fileManager.trashFile(file);
     } finally {
       this.onMutation(path, false);
     }
@@ -118,7 +119,7 @@ export class ObsidianWorkspace implements LocalWorkspace {
       if (folder.children.length > 0) {
         throw new Error(`Cannot replace non-empty folder ${path} with a file.`);
       }
-      await this.vault.trash(folder, false);
+      await this.fileManager.trashFile(folder);
     } finally {
       this.onMutation(path, false);
     }

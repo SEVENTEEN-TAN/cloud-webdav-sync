@@ -90,7 +90,7 @@ export class WebDavClient {
 
   async probeCapabilities(): Promise<CapabilityProbeResult> {
     const capabilities = emptyCapabilities();
-    const probeId = `probe-${globalThis.crypto.randomUUID()}`;
+    const probeId = `probe-${crypto.randomUUID()}`;
     const probeFile = `${probeId}/etag-test.txt`;
     const lockProbePath = `${probeId}/head-lock-test`;
     const moveProbeTarget = `${probeId}/move-lock-target.txt`;
@@ -356,12 +356,17 @@ function isSuccessful(status: number): boolean {
 
 function assertStatus(response: WebDavResponse, expected: number[], code: string): void {
   if (expected.includes(response.status)) return;
-  throw {
-    code,
-    message: `WebDAV request failed with HTTP ${response.status}.`,
-    status: response.status,
-    retryable: response.status === 408 || response.status === 429 || response.status >= 500,
-  } satisfies WebDavErrorInfo;
+  throw new WebDavRequestError(code, response.status);
+}
+
+class WebDavRequestError extends Error implements WebDavErrorInfo {
+  readonly retryable: boolean;
+
+  constructor(readonly code: string, readonly status: number) {
+    super(`WebDAV request failed with HTTP ${status}.`);
+    this.name = "WebDavRequestError";
+    this.retryable = status === 408 || status === 429 || status >= 500;
+  }
 }
 
 function normalizeError(error: unknown): WebDavErrorInfo {

@@ -1,7 +1,7 @@
 {
   "id": "cloud-webdav-sync",
   "name": "Cloud WebDAV Sync",
-  "version": "0.9.6",
+  "version": "0.9.7",
   "minAppVersion": "1.13.1",
   "description": "Sync notes and attachments through WebDAV with conflict handling and content-addressed storage.",
   "author": "SEVENTEEN",

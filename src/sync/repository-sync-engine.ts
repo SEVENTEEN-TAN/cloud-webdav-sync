@@ -462,7 +462,7 @@ export class RepositorySyncEngine {
       pendingApply: {
         targetCommitId: targetCommit.commitId,
         sourceBaseCommitId,
-        operationId: globalThis.crypto.randomUUID(),
+        operationId: crypto.randomUUID(),
       },
     };
     await this.persistSessionState(pendingState);

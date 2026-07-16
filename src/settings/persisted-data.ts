@@ -9,7 +9,7 @@ export function loadSyncSession(value: unknown): SyncSessionState {
     baseCommitId: typeof record.baseCommitId === "string" ? record.baseCommitId : null,
     deviceId: typeof record.deviceId === "string" && record.deviceId
       ? record.deviceId
-      : globalThis.crypto.randomUUID(),
+      : crypto.randomUUID(),
     repositoryId: typeof record.repositoryId === "string" ? record.repositoryId : null,
     ...(pendingApply ? { pendingApply } : {}),
   };

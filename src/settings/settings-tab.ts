@@ -67,13 +67,13 @@ export class WebDavSyncSettingTab extends PluginSettingTab {
     });
     passwordSetting.addButton((button) => button
       .setButtonText("清除")
-      .setWarning()
+      .setDestructive()
       .setDisabled(!passwordConfigured)
       .onClick(async () => {
         if (!window.confirm("确定要清除已保存的 WebDAV 密码吗？")) return;
         try {
           await this.owner.clearPassword();
-          this.display();
+          this.update();
           new Notice("已清除保存的 WebDAV 密码。");
         } catch (error) {
           new Notice(`无法清除密码：${formatError(error)}`);
@@ -99,7 +99,7 @@ export class WebDavSyncSettingTab extends PluginSettingTab {
     new Setting(this.containerEl)
       .setName("忘记仓库绑定")
       .setDesc("清除本地仓库标识和基准提交标识，但不会删除知识库或 WebDAV 中的文件。")
-      .addButton((button) => button.setButtonText("忘记绑定").setWarning().onClick(async () => {
+      .addButton((button) => button.setButtonText("忘记绑定").setDestructive().onClick(async () => {
         if (!window.confirm("确定要忘记此设备的 WebDAV 仓库绑定吗？")) return;
         await this.owner.resetSyncState();
         new Notice("已清除本地 WebDAV 仓库绑定。");
@@ -108,7 +108,7 @@ export class WebDavSyncSettingTab extends PluginSettingTab {
     new Setting(this.containerEl)
       .setName("清除远程同步锁")
       .setDesc("仅用于紧急恢复。清除遗留的远程锁之前，请先关闭其他所有设备上的 Obsidian。")
-      .addButton((button) => button.setButtonText("清除锁").setWarning().onClick(async () => {
+      .addButton((button) => button.setButtonText("清除锁").setDestructive().onClick(async () => {
         if (!window.confirm(
           "确定要清除远程 WebDAV 同步锁吗？请仅在其他所有设备均已停止同步后继续。",
         )) return;

@@ -76,7 +76,7 @@ export default class WebDavSyncPlugin extends Plugin implements SettingsControll
   private currentProgress: SyncProgress | null = null;
 
   async onload(): Promise<void> {
-    const storedData = await this.loadData();
+    const storedData: unknown = await this.loadData();
     this.settings = normalizeSettings(storedData);
     this.syncSession = loadSyncSession(storedData);
     this.syncHistory = loadSyncHistory(storedData);
@@ -545,6 +545,7 @@ export default class WebDavSyncPlugin extends Plugin implements SettingsControll
     });
     const workspace = new ObsidianWorkspace(
       this.app.vault,
+      this.app.fileManager,
       (path) => this.shouldTrack(path),
       transferConcurrency,
       (path, active) => {
@@ -631,7 +632,7 @@ export default class WebDavSyncPlugin extends Plugin implements SettingsControll
     commitId?: string,
   ): void {
     this.syncHistory = appendSyncHistory(this.syncHistory, {
-      id: globalThis.crypto.randomUUID(),
+      id: crypto.randomUUID(),
       startedAt,
       finishedAt: Date.now(),
       triggers: [...triggers],
@@ -693,10 +694,11 @@ export default class WebDavSyncPlugin extends Plugin implements SettingsControll
   }
 
   private shouldTrack(path: string): boolean {
+    const configDir = `${this.app.vault.configDir}/`;
     return !(
       path.startsWith(".trash/") ||
       path.startsWith(".git/") ||
-      path.startsWith(".obsidian/") ||
+      path.startsWith(configDir) ||
       isPathInExcludedFolders(path, this.settings.excludedFolders)
     );
   }

@@ -10,5 +10,5 @@ export function createBasicAuthHeader(credentials: WebDavCredentials): string {
   for (const byte of bytes) {
     binary += String.fromCharCode(byte);
   }
-  return `Basic ${globalThis.btoa(binary)}`;
+  return `Basic ${btoa(binary)}`;
 }

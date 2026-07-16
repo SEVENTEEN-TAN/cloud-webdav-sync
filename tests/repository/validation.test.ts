@@ -8,7 +8,6 @@ const entry = { blob, size: 1, kind: "text" as const };
 
 test("rejects excluded, escaping, absolute, and cross-platform unsafe paths", () => {
   for (const path of [
-    ".obsidian/plugins/x/main.js",
     ".trash/x.md",
     ".git/config",
     "../outside.md",

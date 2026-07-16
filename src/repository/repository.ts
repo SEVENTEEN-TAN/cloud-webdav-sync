@@ -67,7 +67,7 @@ export class ContentAddressedRepository {
     }
     this.createLockOwnerId = options.lockOwnerId
       ? () => options.lockOwnerId as string
-      : () => globalThis.crypto.randomUUID();
+      : () => crypto.randomUUID();
     this.now = options.now ?? (() => new Date());
   }
 
@@ -401,7 +401,7 @@ export class ContentAddressedRepository {
   private async createMetadata(now: Date, conditionalCreate: boolean): Promise<RepositoryMetadata> {
     const candidate: RepositoryMetadata = {
       formatVersion: 1,
-      repositoryId: globalThis.crypto.randomUUID(),
+      repositoryId: crypto.randomUUID(),
       hashAlgorithm: "sha256",
       createdAt: now.toISOString(),
     };

@@ -3,7 +3,7 @@ import type { CommitContent, RepositoryFileEntry, RepositoryTree, StoredCommit }
 const SHA256 = /^[a-f0-9]{64}$/;
 const PACK_PATH = /^packs\/sha256\/[a-f0-9]{2}\/[a-f0-9]{64}\.pack$/;
 const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i;
-const EXCLUDED_ROOTS = new Set([".obsidian", ".trash", ".git"]);
+const EXCLUDED_ROOTS = new Set([".trash", ".git"]);
 
 export function validateCommitContent(value: CommitContent, expectedRepositoryId?: string): void {
   if (value.formatVersion !== 1) throw new Error("Unsupported commit format version.");
