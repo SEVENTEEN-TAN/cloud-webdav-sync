@@ -43,6 +43,8 @@ const DEFAULT_MAX_PACKED_BLOB_BYTES = 256 * 1_024;
 const DEFAULT_MAX_BLOB_PACK_BYTES = 8 * 1_024 * 1_024;
 const DEFAULT_HISTORY_LIMIT = 30;
 const MAX_HISTORY_LIMIT = 200;
+const LOCK_CONSISTENCY_POLLS = 10;
+const LOCK_CONSISTENCY_DELAY_MS = 250;
 
 export class ContentAddressedRepository {
   private metadata: RepositoryMetadata | null = null;
@@ -51,6 +53,7 @@ export class ContentAddressedRepository {
   private readonly lockLeaseMs: number;
   private readonly createLockOwnerId: () => string;
   private readonly now: () => Date;
+  private readonly sleepFor: (milliseconds: number) => Promise<void>;
   private readonly enableBlobPacks: boolean;
   private readonly maxPackedBlobBytes: number;
   private readonly maxBlobPackBytes: number;
@@ -79,6 +82,7 @@ export class ContentAddressedRepository {
       ? () => options.lockOwnerId as string
       : () => crypto.randomUUID();
     this.now = options.now ?? (() => new Date());
+    this.sleepFor = options.sleep ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
   }
 
   async initialize(now = new Date()): Promise<RepositoryMetadata> {
@@ -360,15 +364,43 @@ export class ContentAddressedRepository {
     const candidate = await this.remote.put(candidatePath, canonicalJson(lease), jsonHeaders({}));
     assertSuccessful(candidate.status, "write repository HEAD lock candidate");
 
-    const moved = await this.remote.move(candidatePath, HEAD_LOCK_PATH, false);
-    const owner = await this.remote.get(HEAD_LOCK_PATH);
-    const current = isSuccessful(owner.status) ? parseHeadLease(owner.text) : null;
-    const acquired = sameHeadLease(current, lease);
-    if (!acquired) await this.remote.remove(candidatePath);
-    if (isSuccessful(moved.status) && !acquired) {
-      throw new Error("MOVE reported success but the repository HEAD lock has another owner.");
+    try {
+      await this.remote.move(candidatePath, HEAD_LOCK_PATH, false);
+    } catch {
+      // A network error does not prove that MOVE failed. The server may have
+      // consumed the source and installed the destination before disconnecting.
     }
+    const acquired = await this.reconcileMoveHeadLease(candidatePath, lease);
+    if (!acquired) await this.remote.remove(candidatePath);
     return acquired ? lease : null;
+  }
+
+  private async reconcileMoveHeadLease(candidatePath: string, lease: HeadLease): Promise<boolean> {
+    for (let attempt = 0; attempt < LOCK_CONSISTENCY_POLLS; attempt += 1) {
+      const [owner, candidate] = await Promise.all([
+        this.remote.get(HEAD_LOCK_PATH),
+        this.remote.get(candidatePath),
+      ]);
+      const currentOwner = isSuccessful(owner.status) ? parseHeadLease(owner.text) : null;
+      if (sameHeadLease(currentOwner, lease)) return true;
+
+      const currentCandidate = isSuccessful(candidate.status) ? parseHeadLease(candidate.text) : null;
+      if (currentOwner && currentCandidate && sameHeadLease(currentCandidate, lease)) return false;
+      if (
+        (isSuccessful(owner.status) && !currentOwner) ||
+        (isSuccessful(candidate.status) && !currentCandidate) ||
+        ![200, 404].includes(owner.status) ||
+        ![200, 404].includes(candidate.status)
+      ) {
+        return false;
+      }
+      await this.sleep(LOCK_CONSISTENCY_DELAY_MS);
+    }
+    return false;
+  }
+
+  private sleep(milliseconds: number): Promise<void> {
+    return this.sleepFor(milliseconds);
   }
 
   private createHeadLease(): HeadLease {

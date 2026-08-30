@@ -14,9 +14,9 @@ import type { RepositoryRemote } from "../../src/repository/types";
 import type { WebDavResponse } from "../../src/webdav";
 
 class MemoryRemote implements RepositoryRemote {
-  private readonly resources = new Map<string, { body: string | ArrayBuffer; etag: string }>();
-  private readonly collections = new Set<string>();
-  private version = 0;
+  protected readonly resources = new Map<string, { body: string | ArrayBuffer; etag: string }>();
+  protected readonly collections = new Set<string>();
+  protected version = 0;
   ignoreConditionalCreate = false;
 
   seed(path: string, body: string | ArrayBuffer): void {
@@ -79,6 +79,45 @@ class MemoryRemote implements RepositoryRemote {
     if (this.collections.has(path)) return response(405);
     this.collections.add(path);
     return response(201);
+  }
+}
+
+class AmbiguousMoveRemote extends MemoryRemote {
+  moveMode: "normal" | "installed-500" | "installed-throw" | "consumed-old-target" = "normal";
+  staleOwnerReads = 0;
+  moveCalls = 0;
+  sharedLockDeletes = 0;
+  private staleOwner: { body: string | ArrayBuffer; etag: string } | null = null;
+
+  override async get(path: string): Promise<WebDavResponse> {
+    if (path === HEAD_LOCK_PATH && this.staleOwnerReads > 0 && this.staleOwner) {
+      this.staleOwnerReads -= 1;
+      return response(200, { ETag: this.staleOwner.etag }, this.staleOwner.body);
+    }
+    return super.get(path);
+  }
+
+  override async move(sourcePath: string, destinationPath: string, overwrite = true): Promise<WebDavResponse> {
+    this.moveCalls += 1;
+    if (destinationPath !== HEAD_LOCK_PATH || this.moveMode === "normal") {
+      return super.move(sourcePath, destinationPath, overwrite);
+    }
+    const source = this.resources.get(sourcePath);
+    if (!source) return response(404);
+    const previous = this.resources.get(destinationPath) ?? null;
+    this.resources.delete(sourcePath);
+    if (this.moveMode === "consumed-old-target") {
+      return response(500);
+    }
+    if (previous) this.staleOwner = previous;
+    this.resources.set(destinationPath, source);
+    if (this.moveMode === "installed-throw") throw new Error("net::ERR_CONNECTION_RESET");
+    return response(500);
+  }
+
+  override async remove(path: string): Promise<WebDavResponse> {
+    if (path === HEAD_LOCK_PATH) this.sharedLockDeletes += 1;
+    return super.remove(path);
   }
 }
 
@@ -213,6 +252,147 @@ test("uses MOVE locking when conditional creation is ignored", async () => {
   assert.equal((await remote.head(HEAD_LOCK_PATH)).status, 404);
 });
 
+test("reconciles a MOVE that installs the lease but returns HTTP 500", async () => {
+  const remote = new AmbiguousMoveRemote();
+  const repository = new ContentAddressedRepository(remote, {
+    headUpdateStrategy: "move-lock",
+    conditionalCreate: false,
+    lockOwnerId: "ambiguous-owner",
+    sleep: async () => undefined,
+  });
+  await repository.initialize();
+  const head = await repository.readHead();
+  remote.moveMode = "installed-500";
+  remote.staleOwnerReads = 2;
+
+  assert.deepEqual(
+    await repository.compareAndSwapHead(head.etag, { commit: "6".repeat(64), generation: 1 }),
+    { updated: true },
+  );
+  assert.equal((await repository.readHead()).reference.commit, "6".repeat(64));
+  assert.equal(remote.moveCalls, 2);
+  assert.equal(remote.sharedLockDeletes, 2);
+});
+
+test("reconciles a MOVE that installs the lease and then resets the connection", async () => {
+  const remote = new AmbiguousMoveRemote();
+  const repository = new ContentAddressedRepository(remote, {
+    headUpdateStrategy: "move-lock",
+    conditionalCreate: false,
+    lockOwnerId: "reset-owner",
+    sleep: async () => undefined,
+  });
+  await repository.initialize();
+  const head = await repository.readHead();
+  remote.moveMode = "installed-throw";
+
+  assert.deepEqual(
+    await repository.compareAndSwapHead(head.etag, { commit: "5".repeat(64), generation: 1 }),
+    { updated: true },
+  );
+  assert.equal((await repository.readHead()).reference.commit, "5".repeat(64));
+  assert.equal(remote.moveCalls, 2);
+});
+
+test("does not delete a foreign lock when failed MOVE consumed its candidate", async () => {
+  const remote = new AmbiguousMoveRemote();
+  const repository = new ContentAddressedRepository(remote, {
+    headUpdateStrategy: "move-lock",
+    conditionalCreate: false,
+    lockOwnerId: "uncertain-owner",
+    sleep: async () => undefined,
+  });
+  await repository.initialize();
+  const head = await repository.readHead();
+  const foreign = canonicalJson({
+    formatVersion: 1,
+    ownerId: "foreign-owner",
+    expiresAt: Date.now() - 1,
+  });
+  remote.seed(HEAD_LOCK_PATH, foreign);
+  remote.moveMode = "consumed-old-target";
+
+  assert.deepEqual(
+    await repository.compareAndSwapHead(head.etag, { commit: "4".repeat(64), generation: 1 }),
+    { updated: false, reason: "conflict" },
+  );
+  assert.equal((await remote.get(HEAD_LOCK_PATH)).text, foreign);
+  assert.equal(remote.sharedLockDeletes, 1);
+});
+
+test("fails closed instead of automatically deleting an expired MOVE HEAD lease", async () => {
+  const remote = new MemoryRemote();
+  const now = Date.parse("2026-07-15T12:00:00.000Z");
+  const repository = new ContentAddressedRepository(remote, {
+    headUpdateStrategy: "move-lock",
+    lockOwnerId: "current-owner",
+    now: () => new Date(now),
+  });
+  await repository.initialize();
+  const head = await repository.readHead();
+  const expired = canonicalJson({
+    formatVersion: 1,
+    ownerId: "crashed-owner",
+    expiresAt: now - 1,
+  });
+  remote.seed(HEAD_LOCK_PATH, expired);
+
+  assert.deepEqual(
+    await repository.compareAndSwapHead(head.etag, { commit: "9".repeat(64), generation: 1 }),
+    { updated: false, reason: "conflict" },
+  );
+  assert.deepEqual((await repository.readHead()).reference, { commit: null, generation: 0 });
+  assert.equal((await remote.get(HEAD_LOCK_PATH)).text, expired);
+});
+
+test("treats an active MOVE HEAD lease as contention", async () => {
+  const remote = new MemoryRemote();
+  const now = Date.parse("2026-07-15T12:00:00.000Z");
+  const repository = new ContentAddressedRepository(remote, {
+    headUpdateStrategy: "move-lock",
+    lockOwnerId: "current-owner",
+    now: () => new Date(now),
+  });
+  await repository.initialize();
+  const head = await repository.readHead();
+  remote.seed(HEAD_LOCK_PATH, canonicalJson({
+    formatVersion: 1,
+    ownerId: "active-owner",
+    expiresAt: now + 60_000,
+  }));
+
+  assert.deepEqual(
+    await repository.compareAndSwapHead(head.etag, { commit: "8".repeat(64), generation: 1 }),
+    { updated: false, reason: "conflict" },
+  );
+  assert.deepEqual((await repository.readHead()).reference, { commit: null, generation: 0 });
+  assert.equal((await remote.get(HEAD_LOCK_PATH)).text, canonicalJson({
+    formatVersion: 1,
+    ownerId: "active-owner",
+    expiresAt: now + 60_000,
+  }));
+});
+
+test("fails closed instead of stealing a malformed MOVE HEAD lock", async () => {
+  const remote = new MemoryRemote();
+  const now = Date.parse("2026-07-15T12:00:00.000Z");
+  const repository = new ContentAddressedRepository(remote, {
+    headUpdateStrategy: "move-lock",
+    lockOwnerId: "current-owner",
+    now: () => new Date(now),
+  });
+  await repository.initialize();
+  const head = await repository.readHead();
+  remote.seed(HEAD_LOCK_PATH, "not a lease");
+
+  assert.deepEqual(
+    await repository.compareAndSwapHead(head.etag, { commit: "7".repeat(64), generation: 1 }),
+    { updated: false, reason: "conflict" },
+  );
+  assert.deepEqual((await repository.readHead()).reference, { commit: null, generation: 0 });
+  assert.equal((await remote.get(HEAD_LOCK_PATH)).text, "not a lease");
+});
+
 test("fails closed instead of automatically deleting an expired MKCOL HEAD lease", async () => {
   const remote = new MemoryRemote();
   const now = Date.parse("2026-07-15T12:00:00.000Z");
@@ -223,12 +403,34 @@ test("fails closed instead of automatically deleting an expired MKCOL HEAD lease
   });
   await repository.initialize();
   const head = await repository.readHead();
-  remote.seedCollection(HEAD_LOCK_PATH);
-  remote.seed(HEAD_LOCK_OWNER_PATH, canonicalJson({
+  const expired = canonicalJson({
     formatVersion: 1,
     ownerId: "crashed-owner",
     expiresAt: now - 1,
-  }));
+  });
+  remote.seedCollection(HEAD_LOCK_PATH);
+  remote.seed(HEAD_LOCK_OWNER_PATH, expired);
+
+  assert.deepEqual(
+    await repository.compareAndSwapHead(head.etag, { commit: "c".repeat(64), generation: 1 }),
+    { updated: false, reason: "conflict" },
+  );
+  assert.deepEqual((await repository.readHead()).reference, { commit: null, generation: 0 });
+  assert.equal((await remote.get(HEAD_LOCK_OWNER_PATH)).text, expired);
+});
+
+test("fails closed instead of stealing a malformed MKCOL HEAD lock", async () => {
+  const remote = new MemoryRemote();
+  const now = Date.parse("2026-07-15T12:00:00.000Z");
+  const repository = new ContentAddressedRepository(remote, {
+    headUpdateStrategy: "mkcol-lock",
+    lockOwnerId: "current-owner",
+    now: () => new Date(now),
+  });
+  await repository.initialize();
+  const head = await repository.readHead();
+  remote.seedCollection(HEAD_LOCK_PATH);
+  remote.seed(HEAD_LOCK_OWNER_PATH, "not a lease");
 
   assert.deepEqual(
     await repository.compareAndSwapHead(head.etag, { commit: "c".repeat(64), generation: 1 }),

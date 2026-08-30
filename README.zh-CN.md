@@ -6,7 +6,7 @@ Cloud WebDAV Sync is an experimental sync plugin that stores notes and attachmen
 
 一个实验性的 Obsidian 插件，用于通过 WebDAV 安全地同步知识库（Vault）。
 
-版本 `0.10.0` 默认仍使用“仅规划”模式，并提供需要用户明确开启的实验性真实同步开关。真实同步不会直接逐文件覆盖 WebDAV 目录，而是使用不可变的 SHA-256 Blob、经过校验的 Commit、完整文件树，以及根据服务器能力选择的 HEAD 更新策略。正确实现条件 ETag 的服务器会使用比较并交换（compare-and-swap）；部分云盘 WebDAV 服务则可使用经过主动探测验证的原子 `MOVE`/禁止覆盖租约。
+版本 `0.10.1` 默认仍使用“仅规划”模式，并提供需要用户明确开启的实验性真实同步开关。真实同步不会直接逐文件覆盖 WebDAV 目录，而是使用不可变的 SHA-256 Blob、经过校验的 Commit、完整文件树，以及根据服务器能力选择的 HEAD 更新策略。正确实现条件 ETag 的服务器会使用比较并交换（compare-and-swap）；部分云盘 WebDAV 服务则可使用经过主动探测验证的原子 `MOVE`/禁止覆盖租约。
 
 ## 当前功能
 
@@ -43,6 +43,8 @@ Cloud WebDAV Sync is an experimental sync plugin that stores notes and attachmen
 - 安全处理文件变文件夹、文件夹变文件的路径形态转换：创建新路径前，先删除已经校验的阻塞文件和空文件夹。
 - Windows 文件系统集成测试覆盖真实磁盘上的首次拉取、文件变文件夹、文件夹变文件，以及最终文件树收敛。
 - 每次同步使用不可变的配置快照，并在安全检查点确认配置未变化，防止旧任务在设置变化后继续更新远程 HEAD 或开始拉取。
+- GET、HEAD、OPTIONS、PROPFIND 等只读 WebDAV 请求遇到临时网络错误时使用有界指数退避重试；PUT、MOVE、MKCOL、DELETE 等写请求发生模糊错误时不会盲目重放。
+- MOVE 锁即使返回 HTTP 5xx 或连接重置，也会通过回读目标租约确认是否实际成功；过期或损坏的锁仍安全失败，必须确认其他设备已停止后在同步中心手动清除，避免自动接管导致并发设备互删锁或旧持有者覆盖新 HEAD。
 - 等待用户解决冲突时暂停自动触发；应用远程修改所产生的 Vault 事件不会重新加入待同步队列。
 - 同步中心提供可响应布局的本地/远程冲突内容对比区域。
 
@@ -70,7 +72,7 @@ npm run build
 
 ## 发布
 
-GitHub Actions 中的 `Build release package` 可以手动触发，也会在推送与 `manifest.json` 版本完全一致的 tag 时触发。例如版本 `0.10.0` 应使用 tag `0.10.0`，不要使用 `v0.10.0`。
+GitHub Actions 中的 `Build release package` 可以手动触发，也会在推送与 `manifest.json` 版本完全一致的 tag 时触发。例如版本 `0.10.1` 应使用 tag `0.10.1`，不要使用 `v0.10.1`。
 
 发布流程会运行 `npm ci`、`npm run build`，然后将 `main.js`、`manifest.json` 和 `styles.css` 作为 GitHub Release 附件直接上传。
 

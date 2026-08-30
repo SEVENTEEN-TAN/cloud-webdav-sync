@@ -23,6 +23,7 @@ export interface RepositoryOptions {
   lockLeaseMs?: number;
   lockOwnerId?: string;
   now?: () => Date;
+  sleep?: (milliseconds: number) => Promise<void>;
   enableBlobPacks?: boolean;
   maxPackedBlobBytes?: number;
   maxBlobPackBytes?: number;

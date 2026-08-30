@@ -34,6 +34,7 @@ import { SyncCenterModal, type SyncCenterController, type SyncCenterSnapshot } f
 import { ConflictResolverModal, type ConflictResolverController } from "./ui/conflict-resolver-modal";
 import {
   ObsidianWebDavTransport,
+  RetryingWebDavTransport,
   WebDavClient,
   type CapabilityProbeResult,
   type HeadUpdateStrategy,
@@ -815,7 +816,15 @@ export default class WebDavSyncPlugin extends Plugin implements SettingsControll
         remoteRoot: settings.remoteRoot,
         credentials: { username: settings.username, password },
       },
-      new ObsidianWebDavTransport(),
+      new RetryingWebDavTransport(new ObsidianWebDavTransport(), {
+        maxRetries: 2,
+        onRetry: (info) => {
+          const detail = info.reason === "network"
+            ? `网络错误：${redactLogText(info.error?.message ?? String(info.error))}`
+            : `HTTP ${info.status}`;
+          this.log.warn(`WebDAV ${info.method} 请求失败，正在重试（第 ${info.attempt} 次）。`, { detail });
+        },
+      }),
     );
   }
 
