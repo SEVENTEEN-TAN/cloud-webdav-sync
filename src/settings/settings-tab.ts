@@ -69,7 +69,7 @@ export class WebDavSyncSettingTab extends PluginSettingTab {
       },
       {
         name: "密码或应用专用密码",
-        desc: Boolean(this.owner.getPassword())
+        desc: this.owner.getPassword()
           ? "已在 Obsidian SecretStorage（安全凭据存储）中配置密码。仅在需要替换密码时输入新值。"
           : "密码将保存在 Obsidian SecretStorage（安全凭据存储）中，而不会写入插件的 data.json。",
         aliases: ["密码", "SecretStorage", "凭据"],
