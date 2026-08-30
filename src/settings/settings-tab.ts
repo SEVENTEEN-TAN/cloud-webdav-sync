@@ -1,4 +1,12 @@
-import { App, ConfirmationModal, Notice, Plugin, PluginSettingTab, Setting } from "obsidian";
+import {
+  App,
+  ConfirmationModal,
+  Notice,
+  Plugin,
+  PluginSettingTab,
+  Setting,
+  type SettingDefinitionItem,
+} from "obsidian";
 import type { WebDavSyncSettings } from "./settings";
 
 export interface SettingsController {
@@ -15,6 +23,17 @@ export interface SettingsController {
 export class WebDavSyncSettingTab extends PluginSettingTab {
   constructor(app: App, private readonly owner: Plugin & SettingsController) {
     super(app, owner);
+  }
+
+  getSettingDefinitions(): SettingDefinitionItem[] {
+    return [{
+      name: "WebDAV 同步设置",
+      aliases: ["WebDAV", "同步", "服务器", "远程", "密码", "自动同步", "实际同步"],
+      desc: "配置 WebDAV 连接、同步行为和恢复选项。",
+      render: () => {
+        this.display();
+      },
+    }];
   }
 
   display(): void {

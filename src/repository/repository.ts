@@ -82,7 +82,7 @@ export class ContentAddressedRepository {
       ? () => options.lockOwnerId as string
       : () => crypto.randomUUID();
     this.now = options.now ?? (() => new Date());
-    this.sleepFor = options.sleep ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
+    this.sleepFor = options.sleep ?? ((milliseconds) => new Promise((resolve) => window.setTimeout(resolve, milliseconds)));
   }
 
   async initialize(now = new Date()): Promise<RepositoryMetadata> {
