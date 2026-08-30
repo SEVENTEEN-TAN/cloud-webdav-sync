@@ -43,7 +43,7 @@ const DEFAULT_MAX_PACKED_BLOB_BYTES = 256 * 1_024;
 const DEFAULT_MAX_BLOB_PACK_BYTES = 8 * 1_024 * 1_024;
 const DEFAULT_HISTORY_LIMIT = 30;
 const MAX_HISTORY_LIMIT = 200;
-const LOCK_CONSISTENCY_POLLS = 10;
+const LOCK_CONSISTENCY_POLLS = 20;
 const LOCK_CONSISTENCY_DELAY_MS = 250;
 
 export class ContentAddressedRepository {
@@ -230,11 +230,21 @@ export class ContentAddressedRepository {
 
   async listCommitHistory(limit = DEFAULT_HISTORY_LIMIT): Promise<CommitHistoryEntry[]> {
     const boundedLimit = Math.min(Math.max(Math.floor(limit), 1), MAX_HISTORY_LIMIT);
-    await this.initialize(this.now());
-    const head = await this.readHead();
-    if (head.reference.commit === null) return [];
+    const [metadataResponse, headResponse] = await Promise.all([
+      this.remote.get(REPOSITORY_METADATA_PATH),
+      this.remote.get(HEAD_PATH),
+    ]);
+    if (metadataResponse.status === 404 && headResponse.status === 404) return [];
+    if (metadataResponse.status === 404 || headResponse.status === 404) {
+      throw new Error("Repository history is incomplete: metadata and HEAD must either both exist or both be absent.");
+    }
+    assertSuccessful(metadataResponse.status, "read repository metadata for history");
+    assertSuccessful(headResponse.status, "read HEAD for history");
+    this.metadata = parseMetadata(metadataResponse.text);
+    const head = parseHead(headResponse.text);
+    if (head.commit === null) return [];
     const visited = new Set<string>();
-    const pending = [head.reference.commit];
+    const pending = [head.commit];
     const entries: CommitHistoryEntry[] = [];
     while (pending.length > 0 && visited.size < boundedLimit) {
       const commitId = pending.shift() as string;
@@ -320,42 +330,161 @@ export class ContentAddressedRepository {
     const lease = await this.acquireHeadLease();
     if (!lease) return { updated: false, reason: "conflict" };
 
+    let releaseLease = true;
     try {
       const current = await this.readHead();
       if (current.etag !== expectedEtag) return { updated: false, reason: "conflict" };
       if (!(await this.stillOwnsHeadLease(lease))) return { updated: false, reason: "conflict" };
 
-      const response = await this.remote.put(HEAD_PATH, canonicalJson(next), jsonHeaders({}));
-      assertSuccessful(response.status, "update HEAD under repository lock");
-      const written = await this.readHead();
-      if (!sameHeadReference(written.reference, next)) {
-        throw new Error("Repository HEAD changed unexpectedly while the repository lock was held.");
+      let putResponse: Awaited<ReturnType<RepositoryRemote["put"]>> | null = null;
+      let putError: unknown = null;
+      try {
+        putResponse = await this.remote.put(HEAD_PATH, canonicalJson(next), jsonHeaders({}));
+      } catch (error) {
+        putError = error;
       }
-      return { updated: true };
+
+      if (putResponse && !isSuccessful(putResponse.status) && !isAmbiguousMutationStatus(putResponse.status)) {
+        throw remoteError("update HEAD under repository lock", putResponse.status);
+      }
+
+      const outcome = await this.reconcileHeadUpdate(current.reference, next);
+      if (outcome === "updated") return { updated: true };
+      if (outcome === "contradicted" || (putResponse && isSuccessful(putResponse.status))) {
+        releaseLease = false;
+        throw new Error("Repository HEAD contradicted a successful update; the repository lock was retained.");
+      }
+
+      releaseLease = false;
+      throw new Error("Repository HEAD update is unresolved; the repository lock was retained.", {
+        cause: putError ?? (putResponse ? remoteError("update HEAD under repository lock", putResponse.status) : undefined),
+      });
     } finally {
-      await this.releaseHeadLease(lease);
+      if (releaseLease) await this.releaseHeadLease(lease);
     }
   }
 
   private async acquireHeadLease(): Promise<HeadLease | null> {
     if (this.headUpdateStrategy === "move-lock") return this.acquireMoveHeadLease();
 
-    const created = await this.remote.makeCollection(HEAD_LOCK_PATH);
-    if (created.status === 201) {
-      const lease = this.createHeadLease();
-      const owner = await this.remote.put(
+    let createdStatus: number | null = null;
+    let createError: unknown = null;
+    try {
+      createdStatus = (await this.remote.makeCollection(HEAD_LOCK_PATH)).status;
+    } catch (error) {
+      createError = error;
+    }
+    if (createdStatus === 405 || createdStatus === 412 || createdStatus === 423) return null;
+    if (createdStatus !== 201) {
+      if (createdStatus !== null && !isAmbiguousMutationStatus(createdStatus)) {
+        throw remoteError("acquire repository HEAD lock", createdStatus);
+      }
+      const outcome = await this.reconcileCreatedLockCollection();
+      if (outcome === "contention") return null;
+      if (outcome !== "created") {
+        throw new Error("Repository HEAD lock acquisition is unresolved; no lock was removed or replayed.", {
+          cause: createError ?? (createdStatus === null ? undefined : remoteError("acquire repository HEAD lock", createdStatus)),
+        });
+      }
+    }
+
+    const lease = this.createHeadLease();
+    let ownerStatus: number | null = null;
+    let ownerError: unknown = null;
+    try {
+      ownerStatus = (await this.remote.put(
         HEAD_LOCK_OWNER_PATH,
         canonicalJson(lease),
         jsonHeaders({ "If-None-Match": "*" }),
-      );
-      if (!isSuccessful(owner.status)) {
-        await this.remote.remove(HEAD_LOCK_PATH);
-        throw remoteError("write repository HEAD lock owner", owner.status);
-      }
-      return lease;
+      )).status;
+    } catch (error) {
+      ownerError = error;
     }
-    if (created.status === 405 || created.status === 423) return null;
-    throw remoteError("acquire repository HEAD lock", created.status);
+    if (
+      ownerStatus !== null &&
+      ownerStatus !== 412 &&
+      !isSuccessful(ownerStatus) &&
+      !isAmbiguousMutationStatus(ownerStatus)
+    ) {
+      const removed = await this.remote.remove(HEAD_LOCK_PATH);
+      if (!isSuccessful(removed.status) && removed.status !== 404) {
+        throw new Error(
+          `Could not clean up the repository HEAD lock after owner write failed with HTTP ${ownerStatus}.`,
+          { cause: remoteError("remove repository HEAD lock", removed.status) },
+        );
+      }
+      throw remoteError("write repository HEAD lock owner", ownerStatus);
+    }
+    const ownerOutcome = await this.reconcileHeadLeaseOwner(lease);
+    if (ownerOutcome === "acquired") return lease;
+    if (ownerOutcome === "contention") return null;
+    throw new Error("Repository HEAD lock owner write is unresolved; the lock collection was retained.", {
+      cause: ownerError ?? (ownerStatus === null ? undefined : remoteError("write repository HEAD lock owner", ownerStatus)),
+    });
+  }
+
+  private async reconcileHeadUpdate(
+    original: HeadReference,
+    next: HeadReference,
+  ): Promise<"updated" | "unchanged" | "contradicted" | "unresolved"> {
+    for (let attempt = 0; attempt < LOCK_CONSISTENCY_POLLS; attempt += 1) {
+      let response: Awaited<ReturnType<RepositoryRemote["get"]>>;
+      try {
+        response = await this.remote.get(HEAD_PATH);
+      } catch {
+        if (attempt + 1 < LOCK_CONSISTENCY_POLLS) {
+          await this.sleep(LOCK_CONSISTENCY_DELAY_MS);
+          continue;
+        }
+        return "unresolved";
+      }
+      if (isSuccessful(response.status)) {
+        let reference: HeadReference;
+        try {
+          reference = parseHead(response.text);
+        } catch {
+          return "unresolved";
+        }
+        if (sameHeadReference(reference, next)) return "updated";
+        if (!sameHeadReference(reference, original)) return "contradicted";
+        if (attempt + 1 === LOCK_CONSISTENCY_POLLS) return "unchanged";
+      } else if (!isRetryableReadStatus(response.status)) {
+        return "unresolved";
+      }
+      if (attempt + 1 < LOCK_CONSISTENCY_POLLS) await this.sleep(LOCK_CONSISTENCY_DELAY_MS);
+    }
+    return "unresolved";
+  }
+
+  private async reconcileCreatedLockCollection(): Promise<"created" | "contention" | "unresolved"> {
+    for (let attempt = 0; attempt < LOCK_CONSISTENCY_POLLS; attempt += 1) {
+      const [collection, owner] = await Promise.all([
+        this.remote.head(HEAD_LOCK_PATH),
+        this.remote.get(HEAD_LOCK_OWNER_PATH),
+      ]);
+      if (isSuccessful(collection.status)) {
+        if (isSuccessful(owner.status)) return "contention";
+        if (owner.status === 404) return "created";
+        return "unresolved";
+      }
+      if (collection.status !== 404 || owner.status !== 404) return "unresolved";
+      if (attempt + 1 < LOCK_CONSISTENCY_POLLS) await this.sleep(LOCK_CONSISTENCY_DELAY_MS);
+    }
+    return "unresolved";
+  }
+
+  private async reconcileHeadLeaseOwner(
+    lease: HeadLease,
+  ): Promise<"acquired" | "contention" | "unresolved"> {
+    for (let attempt = 0; attempt < LOCK_CONSISTENCY_POLLS; attempt += 1) {
+      const owner = await this.remote.get(HEAD_LOCK_OWNER_PATH);
+      if (isSuccessful(owner.status)) {
+        return sameHeadLease(parseHeadLease(owner.text), lease) ? "acquired" : "contention";
+      }
+      if (owner.status !== 404 && !isRetryableReadStatus(owner.status)) return "unresolved";
+      if (attempt + 1 < LOCK_CONSISTENCY_POLLS) await this.sleep(LOCK_CONSISTENCY_DELAY_MS);
+    }
+    return "unresolved";
   }
 
   private async acquireMoveHeadLease(): Promise<HeadLease | null> {
@@ -364,39 +493,68 @@ export class ContentAddressedRepository {
     const candidate = await this.remote.put(candidatePath, canonicalJson(lease), jsonHeaders({}));
     assertSuccessful(candidate.status, "write repository HEAD lock candidate");
 
+    let moveStatus: number | null = null;
+    let moveError: unknown = null;
     try {
-      await this.remote.move(candidatePath, HEAD_LOCK_PATH, false);
-    } catch {
-      // A network error does not prove that MOVE failed. The server may have
-      // consumed the source and installed the destination before disconnecting.
+      moveStatus = (await this.remote.move(candidatePath, HEAD_LOCK_PATH, false)).status;
+    } catch (error) {
+      moveError = error;
     }
-    const acquired = await this.reconcileMoveHeadLease(candidatePath, lease);
-    if (!acquired) await this.remote.remove(candidatePath);
-    return acquired ? lease : null;
+    if (
+      moveStatus !== null &&
+      !isSuccessful(moveStatus) &&
+      !isMoveContentionStatus(moveStatus) &&
+      !isAmbiguousMutationStatus(moveStatus)
+    ) {
+      const removed = await this.remote.remove(candidatePath);
+      if (!isSuccessful(removed.status) && removed.status !== 404) {
+        throw new Error(
+          `Could not clean up the repository HEAD lock candidate after MOVE failed with HTTP ${moveStatus}.`,
+          { cause: remoteError("remove repository HEAD lock candidate", removed.status) },
+        );
+      }
+      throw remoteError("acquire repository HEAD lock", moveStatus);
+    }
+
+    const outcome = await this.reconcileMoveHeadLease(candidatePath, lease);
+    if (outcome === "acquired") return lease;
+    if (outcome === "contention") {
+      const removed = await this.remote.remove(candidatePath);
+      if (!isSuccessful(removed.status) && removed.status !== 404) {
+        throw remoteError("remove repository HEAD lock candidate", removed.status);
+      }
+      return null;
+    }
+    throw new Error("Repository MOVE lock acquisition is unresolved; no shared lock was removed.", {
+      cause: moveError ?? (moveStatus === null ? undefined : remoteError("acquire repository HEAD lock", moveStatus)),
+    });
   }
 
-  private async reconcileMoveHeadLease(candidatePath: string, lease: HeadLease): Promise<boolean> {
+  private async reconcileMoveHeadLease(
+    candidatePath: string,
+    lease: HeadLease,
+  ): Promise<"acquired" | "contention" | "unresolved"> {
     for (let attempt = 0; attempt < LOCK_CONSISTENCY_POLLS; attempt += 1) {
       const [owner, candidate] = await Promise.all([
         this.remote.get(HEAD_LOCK_PATH),
         this.remote.get(candidatePath),
       ]);
       const currentOwner = isSuccessful(owner.status) ? parseHeadLease(owner.text) : null;
-      if (sameHeadLease(currentOwner, lease)) return true;
+      if (sameHeadLease(currentOwner, lease)) return "acquired";
 
       const currentCandidate = isSuccessful(candidate.status) ? parseHeadLease(candidate.text) : null;
-      if (currentOwner && currentCandidate && sameHeadLease(currentCandidate, lease)) return false;
+      if (currentOwner && sameHeadLease(currentCandidate, lease)) return "contention";
       if (
         (isSuccessful(owner.status) && !currentOwner) ||
         (isSuccessful(candidate.status) && !currentCandidate) ||
         ![200, 404].includes(owner.status) ||
         ![200, 404].includes(candidate.status)
       ) {
-        return false;
+        return "unresolved";
       }
       await this.sleep(LOCK_CONSISTENCY_DELAY_MS);
     }
-    return false;
+    return "unresolved";
   }
 
   private sleep(milliseconds: number): Promise<void> {
@@ -531,12 +689,19 @@ interface HeadLease {
 }
 
 function parseMetadata(text: string): RepositoryMetadata {
-  const value = JSON.parse(text) as Partial<RepositoryMetadata>;
+  let value: Partial<RepositoryMetadata>;
+  try {
+    value = JSON.parse(text) as Partial<RepositoryMetadata>;
+  } catch {
+    throw new Error("Unsupported or malformed repository metadata.");
+  }
   if (
     value.formatVersion !== 1 ||
     typeof value.repositoryId !== "string" ||
+    value.repositoryId.length === 0 ||
     value.hashAlgorithm !== "sha256" ||
-    typeof value.createdAt !== "string"
+    typeof value.createdAt !== "string" ||
+    Number.isNaN(Date.parse(value.createdAt))
   ) {
     throw new Error("Unsupported or malformed repository metadata.");
   }
@@ -598,6 +763,18 @@ function getHeader(headers: Record<string, string>, name: string): string | null
 
 function isSuccessful(status: number): boolean {
   return status >= 200 && status < 300;
+}
+
+function isMoveContentionStatus(status: number): boolean {
+  return status === 409 || status === 412 || status === 423;
+}
+
+function isAmbiguousMutationStatus(status: number): boolean {
+  return status === 408 || status === 429 || status >= 500;
+}
+
+function isRetryableReadStatus(status: number): boolean {
+  return status === 408 || status === 429 || status >= 500;
 }
 
 function assertSuccessful(status: number, action: string): void {

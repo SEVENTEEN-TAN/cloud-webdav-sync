@@ -885,6 +885,74 @@ test("force pull replaces local edits with the exact remote tree", async () => {
   assert.equal(next.status, "up-to-date");
 });
 
+test("resumes an interrupted force pull from its local recovery snapshot", async () => {
+  const remote = new MemoryRemote();
+  const sourceWorkspace = new MemoryWorkspace({
+    "a.md": "remote A",
+    "b.md": "remote B",
+  });
+  const targetWorkspace = new InterruptingWorkspace();
+  targetWorkspace.interruptEnabled = false;
+  const source = new RepositorySyncEngine(
+    new ContentAddressedRepository(remote),
+    sourceWorkspace,
+    { now: fixedNow, concurrency: 1 },
+  );
+  const target = new RepositorySyncEngine(
+    new ContentAddressedRepository(remote),
+    targetWorkspace,
+    { now: fixedNow, concurrency: 1 },
+  );
+  const pushed = await source.sync(initialState("source"));
+  const pulled = await target.sync(initialState("target"));
+  assert.equal(pulled.state.baseCommitId, pushed.state.baseCommitId);
+
+  targetWorkspace.setText("a.md", "different local A");
+  targetWorkspace.setText("b.md", "different local B");
+  targetWorkspace.setText("local-only.md", "keep until force pull completes");
+  targetWorkspace.writesCompleted = 0;
+  targetWorkspace.interruptAfterWrites = 1;
+  targetWorkspace.interruptEnabled = true;
+  let persistedState: SyncSessionState | null = null;
+  const interrupted = new RepositorySyncEngine(
+    new ContentAddressedRepository(remote),
+    targetWorkspace,
+    {
+      now: fixedNow,
+      concurrency: 1,
+      persistSessionState: async (state) => {
+        persistedState = structuredClone(state);
+      },
+    },
+  );
+
+  await assert.rejects(
+    () => interrupted.forceSync(pulled.state, "pull-remote"),
+    /simulated local apply interruption/,
+  );
+  const journalState = persistedState as SyncSessionState | null;
+  assert.ok(journalState?.pendingApply?.sourceBaseCommitId);
+  assert.equal(journalState.pendingApply.targetCommitId, pushed.state.baseCommitId);
+  assert.equal(targetWorkspace.files.has("local-only.md"), true);
+
+  targetWorkspace.interruptEnabled = false;
+  const restarted = new RepositorySyncEngine(
+    new ContentAddressedRepository(remote),
+    targetWorkspace,
+    { now: fixedNow, concurrency: 1 },
+  );
+  const recovered = await restarted.sync(journalState);
+
+  assert.equal(recovered.status, "pulled");
+  assert.equal(recovered.state.baseCommitId, pushed.state.baseCommitId);
+  assert.equal(recovered.state.pendingApply, undefined);
+  assert.equal(targetWorkspace.getText("a.md"), "remote A");
+  assert.equal(targetWorkspace.getText("b.md"), "remote B");
+  assert.equal(targetWorkspace.files.has("local-only.md"), false);
+  const next = await restarted.sync(recovered.state);
+  assert.equal(next.status, "up-to-date");
+});
+
 test("force pull refuses when the remote repository has no commits", async () => {
   const remote = new MemoryRemote();
   const workspace = new MemoryWorkspace({ "note.md": "local" });

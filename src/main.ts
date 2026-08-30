@@ -22,6 +22,7 @@ import {
   ChangeQueue,
   RepositorySyncEngine,
   SingleFlightSyncScheduler,
+  decideHeadReplanRetry,
   type ConflictChoice,
   type ConflictResolution,
   type ForceSyncDirection,
@@ -581,28 +582,29 @@ export default class WebDavSyncPlugin extends Plugin implements SettingsControll
     const engine = this.buildRepositoryEngine(client, headUpdateStrategy, conditionalCreate, settings, revision);
 
     let result: RepositorySyncResult = { status: "retry", state: this.syncSession };
-    for (let attempt = 0; attempt < settings.headUpdateMaxRetries; attempt += 1) {
+    for (let attempt = 0; ; attempt += 1) {
       result = await engine.sync(this.syncSession, this.conflictResolutions);
       if (result.status !== "retry") return result;
+      const retry = decideHeadReplanRetry(attempt, settings.headUpdateMaxRetries);
+      if (!retry.shouldRetry) return result;
       this.log.warn("提交期间远程 HEAD 或同步锁已变化，正在重新规划。", {
-        attempt: attempt + 1,
-        maxRetries: settings.headUpdateMaxRetries,
+        retry: retry.retryNumber,
+        maxRetries: retry.maxRetries,
         retryDelayMs: settings.headUpdateRetryDelayMs,
       });
-      if (attempt + 1 < settings.headUpdateMaxRetries && settings.headUpdateRetryDelayMs > 0) {
+      if (settings.headUpdateRetryDelayMs > 0) {
         await sleep(settings.headUpdateRetryDelayMs);
-        this.assertRunConfiguration(revision);
       }
+      this.assertRunConfiguration(revision);
     }
-    return result;
   }
 
   forcePushLocal(): Promise<void> {
-    return this.runForcedSync("push-local");
+    return this.scheduler.requestExclusive(() => this.runForcedSync("push-local"));
   }
 
   forcePullRemote(): Promise<void> {
-    return this.runForcedSync("pull-remote");
+    return this.scheduler.requestExclusive(() => this.runForcedSync("pull-remote"));
   }
 
   async fetchCommitHistory(): Promise<CommitHistoryEntry[]> {
@@ -611,29 +613,13 @@ export default class WebDavSyncPlugin extends Plugin implements SettingsControll
     }
     const settings = { ...this.settings };
     const client = this.createWebDavClient(settings, this.getPassword());
-    let capabilities = this.capabilityConfigKey === connectionConfigKey(settings)
-      ? this.capabilities
-      : null;
-    if (!capabilities) {
-      const probe = await client.probeCapabilities();
-      this.capabilities = probe.capabilities;
-      if (!probe.ok) {
-        this.capabilityConfigKey = null;
-        throw new Error(probe.error?.message ?? "WebDAV 能力检测失败。");
-      }
-      capabilities = probe.capabilities;
-      this.capabilityConfigKey = connectionConfigKey(settings);
-    }
-    const repository = new ContentAddressedRepository(client, {
-      headUpdateStrategy: capabilities.headUpdateStrategy ?? "etag",
-      conditionalCreate: capabilities.conditionalCreate,
-    });
+    const repository = new ContentAddressedRepository(client);
     return repository.listCommitHistory();
   }
 
   private async runForcedSync(direction: ForceSyncDirection): Promise<void> {
-    if (!["idle", "error", "conflict", "offline"].includes(this.state.current)) {
-      throw new Error("请等待当前同步任务完成后再执行强制恢复操作。");
+    if (!this.settings.enableRealSync) {
+      throw new Error("强制恢复需要先在设置中启用实际同步。");
     }
     if (!this.isConfigured()) {
       throw new Error("请先配置 WebDAV 服务器、远程目录、用户名和密码。");
@@ -682,18 +668,21 @@ export default class WebDavSyncPlugin extends Plugin implements SettingsControll
       this.state.transitionTo("planning");
       this.setSyncProgress({ phase: "planning", completed: 0, total: 1, message: "规划同步" });
       let result: RepositorySyncResult = { status: "retry", state: this.syncSession };
-      for (let attempt = 0; attempt < runSettings.headUpdateMaxRetries; attempt += 1) {
+      for (let attempt = 0; ; attempt += 1) {
         result = await engine.forceSync(this.syncSession, direction);
         if (result.status !== "retry") break;
+        const retry = decideHeadReplanRetry(attempt, runSettings.headUpdateMaxRetries);
+        if (!retry.shouldRetry) break;
         this.log.warn("强制操作期间远程 HEAD 或同步锁已变化，正在重试。", {
           direction,
-          attempt: attempt + 1,
-          maxRetries: runSettings.headUpdateMaxRetries,
+          retry: retry.retryNumber,
+          maxRetries: retry.maxRetries,
+          retryDelayMs: runSettings.headUpdateRetryDelayMs,
         });
-        if (attempt + 1 < runSettings.headUpdateMaxRetries && runSettings.headUpdateRetryDelayMs > 0) {
+        if (runSettings.headUpdateRetryDelayMs > 0) {
           await sleep(runSettings.headUpdateRetryDelayMs);
-          this.assertRunConfiguration(revision);
         }
+        this.assertRunConfiguration(revision);
       }
       if (result.status === "retry") {
         throw new Error("远程 HEAD 或同步锁连续变化，强制操作未能完成。请确认其他设备已停止同步后重试。");

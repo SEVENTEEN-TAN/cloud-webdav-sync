@@ -168,12 +168,12 @@ export class WebDavSyncSettingTab extends PluginSettingTab {
 
     new Setting(this.containerEl)
       .setName("远程 HEAD 最大重试次数")
-      .setDesc("提交期间远程 HEAD 或同步锁发生竞争时，最多重新规划并重试多少次（1～20）。")
+      .setDesc("首次尝试后，远程 HEAD 或同步锁发生竞争时最多重新规划并重试多少次（0～20）。")
       .addText((text) => text
         .setValue(String(this.owner.settings.headUpdateMaxRetries))
         .onChange((value) => {
           const retries = Number(value);
-          if (Number.isInteger(retries) && retries >= 1 && retries <= 20) {
+          if (Number.isInteger(retries) && retries >= 0 && retries <= 20) {
             this.saveSetting({ headUpdateMaxRetries: retries });
           }
         }));

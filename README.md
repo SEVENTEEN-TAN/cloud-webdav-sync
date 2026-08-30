@@ -4,7 +4,7 @@
 
 Cloud WebDAV Sync is an experimental sync plugin that stores notes and attachments in a WebDAV-backed repository. It uses content-addressed objects, validated commit snapshots, server capability checks, conflict detection, and a conflict resolution workspace to reduce accidental overwrites.
 
-Version `0.10.1` still defaults to planning-only mode. Real sync must be explicitly enabled in settings. When enabled, the plugin does not overwrite a plain remote folder file by file. Instead, it writes immutable SHA-256 blobs, verified commits, complete file trees, and a remote HEAD update strategy selected from the WebDAV server's detected capabilities.
+Version `0.10.2` still defaults to planning-only mode. Real sync must be explicitly enabled in settings. When enabled, the plugin does not overwrite a plain remote folder file by file. Instead, it writes immutable SHA-256 blobs, verified commits, complete file trees, and a remote HEAD update strategy selected from the WebDAV server's detected capabilities.
 
 ## Features
 
@@ -12,7 +12,7 @@ Version `0.10.1` still defaults to planning-only mode. Real sync must be explici
 - Command palette actions for checking sync, opening the sync center, and rescanning the vault.
 - Automatic checks while the app is running, including startup, foreground resume, local file changes, and configurable remote polling.
 - Cached WebDAV capability reports that are invalidated when the URL, remote folder, username, or password changes.
-- Single-flight scheduling so full sync jobs do not overlap.
+- One ordered operation queue for normal and force synchronization: normal triggers coalesce, while force operations act as exclusive barriers and never overlap another sync.
 - Local change queue coalescing for create, modify, delete, and rename events.
 - Desktop status bar state and a cross-platform sync center.
 - Sync center sections for overview, pending changes, history, logs, and server capabilities.
@@ -31,7 +31,8 @@ Version `0.10.1` still defaults to planning-only mode. Real sync must be explici
 - Repository identity checks, commit/blob integrity validation, and large-delete protection.
 - Safe handling for file-to-folder and folder-to-file path shape changes.
 - Read-only WebDAV requests retry transient network failures with bounded exponential backoff; mutating requests are never blindly replayed after an ambiguous response.
-- MOVE-lock acquisition reconciles the destination lease after HTTP 5xx or connection resets, covering servers that apply a MOVE before returning an error. Expired or malformed locks still fail closed and require the confirmation-guarded manual clear action.
+- Repository history refresh is strictly read-only: an absent repository reports no commits, while partially missing metadata/HEAD is reported as corruption instead of being silently initialized or repaired.
+- MKCOL, owner PUT, MOVE, and locked HEAD PUT reconcile ambiguous outcomes by reading exact postconditions. Delayed visibility is polled without replaying writes; unresolved or contradictory outcomes retain the lease and require the confirmation-guarded manual clear action.
 
 ## Safety Model
 
@@ -55,7 +56,7 @@ After building, copy or link `main.js`, `manifest.json`, and `styles.css` into a
 
 ## Release
 
-The `Build release package` GitHub Actions workflow can be triggered manually or by pushing a tag that exactly matches `manifest.json`'s version. For version `0.10.1`, use tag `0.10.1`, not `v0.10.1`.
+The `Build release package` GitHub Actions workflow can be triggered manually or by pushing a tag that exactly matches `manifest.json`'s version. For version `0.10.2`, use tag `0.10.2`, not `v0.10.2`.
 
 The workflow runs `npm ci` and `npm run build`, then uploads `main.js`, `manifest.json`, and `styles.css` directly as GitHub Release assets.
 
@@ -80,7 +81,7 @@ tests/          Unit and integration tests
 - The default transfer concurrency limit is 16; mobile runtime paths reduce it further.
 - First sync stops when the local vault and existing remote repository both contain unrelated files unless the user explicitly chooses an initial policy.
 - The conflict workflow supports local/remote selection, but does not yet provide a full manual merge editor.
-- Repository history exists as commits and can be viewed in the sync center, but rollback UI, garbage collection, and large-file chunking are not implemented yet.
+- The sync center lists commits reachable from the current HEAD. Unreachable commits may remain stored after force recovery, but rollback/reflog UI, garbage collection, and large-file chunking are not implemented yet.
 - Compatibility has been tested against real cloud WebDAV servers and Windows filesystem integration paths, but broader WebDAV server and mobile-device coverage still needs more validation.
 
 ## License

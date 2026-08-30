@@ -7,8 +7,11 @@ import { sha256Hex } from "../../src/repository/hash";
 import {
   blobPath,
   commitPath,
+  HEAD_LOCK_CANDIDATES_PATH,
   HEAD_LOCK_OWNER_PATH,
   HEAD_LOCK_PATH,
+  HEAD_PATH,
+  REPOSITORY_METADATA_PATH,
 } from "../../src/repository/paths";
 import type { RepositoryRemote } from "../../src/repository/types";
 import type { WebDavResponse } from "../../src/webdav";
@@ -82,14 +85,110 @@ class MemoryRemote implements RepositoryRemote {
   }
 }
 
-class AmbiguousMoveRemote extends MemoryRemote {
-  moveMode: "normal" | "installed-500" | "installed-throw" | "consumed-old-target" = "normal";
+class MutationTrackingRemote extends MemoryRemote {
+  mutations = 0;
+
+  override async put(path: string, body: string | ArrayBuffer, headers: Record<string, string> = {}): Promise<WebDavResponse> {
+    this.mutations += 1;
+    return super.put(path, body, headers);
+  }
+
+  override async move(sourcePath: string, destinationPath: string, overwrite = true): Promise<WebDavResponse> {
+    this.mutations += 1;
+    return super.move(sourcePath, destinationPath, overwrite);
+  }
+
+  override async remove(path: string): Promise<WebDavResponse> {
+    this.mutations += 1;
+    return super.remove(path);
+  }
+
+  override async makeCollection(path: string): Promise<WebDavResponse> {
+    this.mutations += 1;
+    return super.makeCollection(path);
+  }
+}
+
+class FaultInjectionRemote extends MemoryRemote {
+  makeCollectionFault: "none" | "created-500" | "created-throw" = "none";
+  ownerPutFault: "none" | "installed-500" | "installed-throw" | "rejected-403" = "none";
+  headPutFault: "none" | "installed-500" | "installed-throw" | "unchanged-500" | "success-without-write" = "none";
+  putCalls = new Map<string, number>();
+  sharedLockDeletes = 0;
+  staleCollectionReads = 0;
   staleOwnerReads = 0;
+  staleHeadReads = 0;
+  private previousHead: { body: string | ArrayBuffer; etag: string } | null = null;
+
+  override async get(path: string): Promise<WebDavResponse> {
+    if (path === HEAD_LOCK_OWNER_PATH && this.staleOwnerReads > 0) {
+      this.staleOwnerReads -= 1;
+      return response(404);
+    }
+    if (path === HEAD_PATH && this.staleHeadReads > 0 && this.previousHead) {
+      this.staleHeadReads -= 1;
+      return response(200, { ETag: this.previousHead.etag }, this.previousHead.body);
+    }
+    return super.get(path);
+  }
+
+  override async head(path: string): Promise<WebDavResponse> {
+    if (path === HEAD_LOCK_PATH && this.staleCollectionReads > 0) {
+      this.staleCollectionReads -= 1;
+      return response(404);
+    }
+    return super.head(path);
+  }
+
+  override async makeCollection(path: string): Promise<WebDavResponse> {
+    if (path !== HEAD_LOCK_PATH || this.makeCollectionFault === "none") return super.makeCollection(path);
+    this.collections.add(path);
+    if (this.makeCollectionFault === "created-throw") throw new Error("net::ERR_CONNECTION_RESET");
+    return response(500);
+  }
+
+  override async put(
+    path: string,
+    body: string | ArrayBuffer,
+    headers: Record<string, string> = {},
+  ): Promise<WebDavResponse> {
+    this.putCalls.set(path, (this.putCalls.get(path) ?? 0) + 1);
+    if (path === HEAD_LOCK_OWNER_PATH && this.ownerPutFault !== "none") {
+      if (this.ownerPutFault === "rejected-403") return response(403);
+      const installed = await super.put(path, body, headers);
+      if (this.ownerPutFault === "installed-throw") throw new Error("net::ERR_CONNECTION_RESET");
+      return response(500, installed.headers);
+    }
+    if (path === HEAD_PATH && this.headPutFault !== "none") {
+      if (this.headPutFault === "unchanged-500") return response(500);
+      if (this.headPutFault === "success-without-write") return response(204);
+      this.previousHead = this.resources.get(path) ?? null;
+      const installed = await super.put(path, body, headers);
+      if (this.headPutFault === "installed-throw") throw new Error("net::ERR_CONNECTION_RESET");
+      return response(500, installed.headers);
+    }
+    return super.put(path, body, headers);
+  }
+
+  override async remove(path: string): Promise<WebDavResponse> {
+    if (path === HEAD_LOCK_PATH) this.sharedLockDeletes += 1;
+    return super.remove(path);
+  }
+}
+
+class AmbiguousMoveRemote extends MemoryRemote {
+  moveMode: "normal" | "installed-500" | "installed-throw" | "consumed-old-target" | "rejected-403" = "normal";
+  staleOwnerReads = 0;
+  destinationNotFoundReads = 0;
   moveCalls = 0;
   sharedLockDeletes = 0;
   private staleOwner: { body: string | ArrayBuffer; etag: string } | null = null;
 
   override async get(path: string): Promise<WebDavResponse> {
+    if (path === HEAD_LOCK_PATH && this.destinationNotFoundReads > 0) {
+      this.destinationNotFoundReads -= 1;
+      return response(404);
+    }
     if (path === HEAD_LOCK_PATH && this.staleOwnerReads > 0 && this.staleOwner) {
       this.staleOwnerReads -= 1;
       return response(200, { ETag: this.staleOwner.etag }, this.staleOwner.body);
@@ -104,6 +203,7 @@ class AmbiguousMoveRemote extends MemoryRemote {
     }
     const source = this.resources.get(sourcePath);
     if (!source) return response(404);
+    if (this.moveMode === "rejected-403") return response(403);
     const previous = this.resources.get(destinationPath) ?? null;
     this.resources.delete(sourcePath);
     if (this.moveMode === "consumed-old-target") {
@@ -294,7 +394,7 @@ test("reconciles a MOVE that installs the lease and then resets the connection",
   assert.equal(remote.moveCalls, 2);
 });
 
-test("does not delete a foreign lock when failed MOVE consumed its candidate", async () => {
+test("reports unresolved MOVE state without deleting a foreign lock when the candidate was consumed", async () => {
   const remote = new AmbiguousMoveRemote();
   const repository = new ContentAddressedRepository(remote, {
     headUpdateStrategy: "move-lock",
@@ -312,9 +412,9 @@ test("does not delete a foreign lock when failed MOVE consumed its candidate", a
   remote.seed(HEAD_LOCK_PATH, foreign);
   remote.moveMode = "consumed-old-target";
 
-  assert.deepEqual(
-    await repository.compareAndSwapHead(head.etag, { commit: "4".repeat(64), generation: 1 }),
-    { updated: false, reason: "conflict" },
+  await assert.rejects(
+    () => repository.compareAndSwapHead(head.etag, { commit: "4".repeat(64), generation: 1 }),
+    /MOVE lock acquisition is unresolved/,
   );
   assert.equal((await remote.get(HEAD_LOCK_PATH)).text, foreign);
   assert.equal(remote.sharedLockDeletes, 1);
@@ -385,9 +485,9 @@ test("fails closed instead of stealing a malformed MOVE HEAD lock", async () => 
   const head = await repository.readHead();
   remote.seed(HEAD_LOCK_PATH, "not a lease");
 
-  assert.deepEqual(
-    await repository.compareAndSwapHead(head.etag, { commit: "7".repeat(64), generation: 1 }),
-    { updated: false, reason: "conflict" },
+  await assert.rejects(
+    () => repository.compareAndSwapHead(head.etag, { commit: "7".repeat(64), generation: 1 }),
+    /MOVE lock acquisition is unresolved/,
   );
   assert.deepEqual((await repository.readHead()).reference, { commit: null, generation: 0 });
   assert.equal((await remote.get(HEAD_LOCK_PATH)).text, "not a lease");
@@ -462,6 +562,216 @@ test("treats an active MKCOL HEAD lease as contention", async () => {
     { updated: false, reason: "conflict" },
   );
   assert.deepEqual((await repository.readHead()).reference, { commit: null, generation: 0 });
+  assert.equal((await remote.head(HEAD_LOCK_PATH)).status, 200);
+});
+
+test("reconciles ambiguous MKCOL through an exact owner token without replaying it", async () => {
+  const remote = new FaultInjectionRemote();
+  const repository = new ContentAddressedRepository(remote, {
+    headUpdateStrategy: "mkcol-lock",
+    lockOwnerId: "mkcol-ambiguous",
+    sleep: async () => undefined,
+  });
+  await repository.initialize();
+  const head = await repository.readHead();
+  const ownerPutsBefore = remote.putCalls.get(HEAD_LOCK_OWNER_PATH) ?? 0;
+  remote.makeCollectionFault = "created-throw";
+
+  assert.deepEqual(
+    await repository.compareAndSwapHead(head.etag, { commit: "1".repeat(64), generation: 1 }),
+    { updated: true },
+  );
+  assert.equal((remote.putCalls.get(HEAD_LOCK_OWNER_PATH) ?? 0) - ownerPutsBefore, 1);
+  assert.equal((await remote.head(HEAD_LOCK_PATH)).status, 404);
+});
+
+test("waits beyond the former MOVE visibility window before accepting its exact lease", async () => {
+  const remote = new AmbiguousMoveRemote();
+  const repository = new ContentAddressedRepository(remote, {
+    headUpdateStrategy: "move-lock",
+    conditionalCreate: false,
+    lockOwnerId: "move-delayed",
+    sleep: async () => undefined,
+  });
+  await repository.initialize();
+  const head = await repository.readHead();
+  remote.moveMode = "installed-throw";
+  remote.destinationNotFoundReads = 12;
+
+  assert.deepEqual(
+    await repository.compareAndSwapHead(head.etag, { commit: "e".repeat(64), generation: 1 }),
+    { updated: true },
+  );
+  assert.deepEqual((await repository.readHead()).reference, { commit: "e".repeat(64), generation: 1 });
+});
+
+test("waits for an ambiguously created MKCOL lock to become visible", async () => {
+  const remote = new FaultInjectionRemote();
+  const repository = new ContentAddressedRepository(remote, {
+    headUpdateStrategy: "mkcol-lock",
+    lockOwnerId: "mkcol-delayed",
+    sleep: async () => undefined,
+  });
+  await repository.initialize();
+  const head = await repository.readHead();
+  remote.makeCollectionFault = "created-500";
+  remote.staleCollectionReads = 12;
+
+  assert.deepEqual(
+    await repository.compareAndSwapHead(head.etag, { commit: "f".repeat(64), generation: 1 }),
+    { updated: true },
+  );
+});
+
+test("accepts an ambiguous owner PUT only when the stored owner verifies", async () => {
+  const remote = new FaultInjectionRemote();
+  const repository = new ContentAddressedRepository(remote, {
+    headUpdateStrategy: "mkcol-lock",
+    lockOwnerId: "owner-ambiguous",
+  });
+  await repository.initialize();
+  const head = await repository.readHead();
+  const ownerPutsBefore = remote.putCalls.get(HEAD_LOCK_OWNER_PATH) ?? 0;
+  remote.ownerPutFault = "installed-throw";
+
+  assert.deepEqual(
+    await repository.compareAndSwapHead(head.etag, { commit: "2".repeat(64), generation: 1 }),
+    { updated: true },
+  );
+  assert.equal((remote.putCalls.get(HEAD_LOCK_OWNER_PATH) ?? 0) - ownerPutsBefore, 1);
+  assert.equal((await remote.head(HEAD_LOCK_PATH)).status, 404);
+});
+
+test("waits for an ambiguously written owner token to become visible", async () => {
+  const remote = new FaultInjectionRemote();
+  const repository = new ContentAddressedRepository(remote, {
+    headUpdateStrategy: "mkcol-lock",
+    lockOwnerId: "owner-delayed",
+    sleep: async () => undefined,
+  });
+  await repository.initialize();
+  const head = await repository.readHead();
+  remote.ownerPutFault = "installed-500";
+  remote.staleOwnerReads = 12;
+
+  assert.deepEqual(
+    await repository.compareAndSwapHead(head.etag, { commit: "4".repeat(64), generation: 1 }),
+    { updated: true },
+  );
+});
+
+test("removes its definitely created MKCOL lock after a definite owner PUT rejection", async () => {
+  const remote = new FaultInjectionRemote();
+  const repository = new ContentAddressedRepository(remote, {
+    headUpdateStrategy: "mkcol-lock",
+    lockOwnerId: "owner-rejected",
+  });
+  await repository.initialize();
+  const head = await repository.readHead();
+  const deletesBefore = remote.sharedLockDeletes;
+  remote.ownerPutFault = "rejected-403";
+
+  await assert.rejects(
+    () => repository.compareAndSwapHead(head.etag, { commit: "3".repeat(64), generation: 1 }),
+    /HTTP 403/,
+  );
+  assert.equal(remote.sharedLockDeletes, deletesBefore + 1);
+  assert.equal((await remote.head(HEAD_LOCK_PATH)).status, 404);
+});
+
+test("propagates a definite MOVE rejection instead of reporting contention", async () => {
+  const remote = new AmbiguousMoveRemote();
+  const repository = new ContentAddressedRepository(remote, {
+    headUpdateStrategy: "move-lock",
+    conditionalCreate: false,
+    lockOwnerId: "move-rejected",
+  });
+  await repository.initialize();
+  const head = await repository.readHead();
+  remote.moveMode = "rejected-403";
+
+  await assert.rejects(
+    () => repository.compareAndSwapHead(head.etag, { commit: "a".repeat(64), generation: 1 }),
+    /HTTP 403/,
+  );
+  assert.equal(remote.moveCalls, 2);
+  assert.equal((await remote.get(`${HEAD_LOCK_CANDIDATES_PATH}/move-rejected.json`)).status, 404);
+});
+
+test("reconciles an ambiguous locked HEAD PUT with one write and releases a verified lease", async () => {
+  const remote = new FaultInjectionRemote();
+  const repository = new ContentAddressedRepository(remote, {
+    headUpdateStrategy: "mkcol-lock",
+    lockOwnerId: "head-installed",
+  });
+  await repository.initialize();
+  const head = await repository.readHead();
+  const headPutsBefore = remote.putCalls.get(HEAD_PATH) ?? 0;
+  remote.headPutFault = "installed-throw";
+
+  assert.deepEqual(
+    await repository.compareAndSwapHead(head.etag, { commit: "b".repeat(64), generation: 1 }),
+    { updated: true },
+  );
+  assert.equal((remote.putCalls.get(HEAD_PATH) ?? 0) - headPutsBefore, 1);
+  assert.equal((await remote.head(HEAD_LOCK_PATH)).status, 404);
+});
+
+test("waits for an ambiguously updated HEAD to become visible without replaying PUT", async () => {
+  const remote = new FaultInjectionRemote();
+  const repository = new ContentAddressedRepository(remote, {
+    headUpdateStrategy: "mkcol-lock",
+    lockOwnerId: "head-delayed",
+    sleep: async () => undefined,
+  });
+  await repository.initialize();
+  const head = await repository.readHead();
+  const headPutsBefore = remote.putCalls.get(HEAD_PATH) ?? 0;
+  remote.headPutFault = "installed-500";
+  remote.staleHeadReads = 12;
+
+  assert.deepEqual(
+    await repository.compareAndSwapHead(head.etag, { commit: "5".repeat(64), generation: 1 }),
+    { updated: true },
+  );
+  assert.equal((remote.putCalls.get(HEAD_PATH) ?? 0) - headPutsBefore, 1);
+});
+
+test("retains the lease when a locked HEAD PUT remains unresolved", async () => {
+  const remote = new FaultInjectionRemote();
+  const repository = new ContentAddressedRepository(remote, {
+    headUpdateStrategy: "mkcol-lock",
+    lockOwnerId: "head-unresolved",
+    sleep: async () => undefined,
+  });
+  await repository.initialize();
+  const head = await repository.readHead();
+  const headPutsBefore = remote.putCalls.get(HEAD_PATH) ?? 0;
+  remote.headPutFault = "unchanged-500";
+
+  await assert.rejects(
+    () => repository.compareAndSwapHead(head.etag, { commit: "c".repeat(64), generation: 1 }),
+    /HEAD update is unresolved/,
+  );
+  assert.equal((remote.putCalls.get(HEAD_PATH) ?? 0) - headPutsBefore, 1);
+  assert.equal((await remote.head(HEAD_LOCK_PATH)).status, 200);
+});
+
+test("retains the lease when a successful locked HEAD PUT contradicts the stored HEAD", async () => {
+  const remote = new FaultInjectionRemote();
+  const repository = new ContentAddressedRepository(remote, {
+    headUpdateStrategy: "mkcol-lock",
+    lockOwnerId: "head-contradiction",
+    sleep: async () => undefined,
+  });
+  await repository.initialize();
+  const head = await repository.readHead();
+  remote.headPutFault = "success-without-write";
+
+  await assert.rejects(
+    () => repository.compareAndSwapHead(head.etag, { commit: "d".repeat(64), generation: 1 }),
+    /contradicted a successful update/,
+  );
   assert.equal((await remote.head(HEAD_LOCK_PATH)).status, 200);
 });
 
@@ -546,4 +856,60 @@ test("lists commit history from HEAD ordered by newest first", async () => {
 
   const emptyRepository = new ContentAddressedRepository(new MemoryRemote());
   assert.deepEqual(await emptyRepository.listCommitHistory(), []);
+});
+
+test("history is strictly read-only when metadata and HEAD are both absent", async () => {
+  const remote = new MutationTrackingRemote();
+  const repository = new ContentAddressedRepository(remote);
+
+  assert.deepEqual(await repository.listCommitHistory(), []);
+  assert.equal(remote.mutations, 0);
+  assert.equal((await remote.get(REPOSITORY_METADATA_PATH)).status, 404);
+  assert.equal((await remote.get(HEAD_PATH)).status, 404);
+});
+
+test("history rejects an incomplete repository without repairing it", async () => {
+  const remote = new MutationTrackingRemote();
+  remote.seed(REPOSITORY_METADATA_PATH, canonicalJson({
+    formatVersion: 1,
+    repositoryId: "history-repository",
+    hashAlgorithm: "sha256",
+    createdAt: "2026-07-15T00:00:00.000Z",
+  }));
+  const repository = new ContentAddressedRepository(remote);
+
+  await assert.rejects(() => repository.listCommitHistory(), /history is incomplete/);
+  assert.equal(remote.mutations, 0);
+  assert.equal((await remote.get(HEAD_PATH)).status, 404);
+});
+
+test("history validates metadata and does not require a HEAD ETag", async () => {
+  const remote = new MutationTrackingRemote();
+  remote.seed(REPOSITORY_METADATA_PATH, canonicalJson({
+    formatVersion: 1,
+    repositoryId: "history-repository",
+    hashAlgorithm: "sha256",
+    createdAt: "2026-07-15T00:00:00.000Z",
+  }));
+  remote.seed(HEAD_PATH, canonicalJson({ commit: null, generation: 0 }));
+  const originalGet = remote.get.bind(remote);
+  remote.get = async (path: string) => {
+    const result = await originalGet(path);
+    return path === HEAD_PATH ? { ...result, headers: {} } : result;
+  };
+
+  assert.deepEqual(await new ContentAddressedRepository(remote).listCommitHistory(), []);
+  assert.equal(remote.mutations, 0);
+
+  remote.seed(REPOSITORY_METADATA_PATH, canonicalJson({
+    formatVersion: 1,
+    repositoryId: "history-repository",
+    hashAlgorithm: "sha256",
+    createdAt: "not-a-date",
+  }));
+  await assert.rejects(
+    () => new ContentAddressedRepository(remote).listCommitHistory(),
+    /malformed repository metadata/,
+  );
+  assert.equal(remote.mutations, 0);
 });
