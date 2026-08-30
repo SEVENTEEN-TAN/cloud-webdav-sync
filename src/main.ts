@@ -24,6 +24,7 @@ import {
   SingleFlightSyncScheduler,
   type ConflictChoice,
   type ConflictResolution,
+  type ForceSyncDirection,
   type RepositorySyncResult,
   type SyncProgress,
   type SyncSessionState,
@@ -38,7 +39,7 @@ import {
   type HeadUpdateStrategy,
   type WebDavCapabilities,
 } from "./webdav";
-import { ContentAddressedRepository, HEAD_LOCK_PATH } from "./repository";
+import { ContentAddressedRepository, HEAD_LOCK_PATH, type CommitHistoryEntry } from "./repository";
 import { ObsidianWorkspace } from "./vault";
 
 interface PendingConflict {
@@ -528,13 +529,13 @@ export default class WebDavSyncPlugin extends Plugin implements SettingsControll
     }
   }
 
-  private async runRepositorySync(
+  private buildRepositoryEngine(
     client: WebDavClient,
     headUpdateStrategy: Exclude<HeadUpdateStrategy, null>,
     conditionalCreate: boolean,
     settings: WebDavSyncSettings,
     revision: number,
-  ): Promise<RepositorySyncResult> {
+  ): RepositorySyncEngine {
     const transferConcurrency = Platform.isMobile
       ? Math.min(settings.transferConcurrency, 2)
       : settings.transferConcurrency;
@@ -556,7 +557,7 @@ export default class WebDavSyncPlugin extends Plugin implements SettingsControll
       },
       maxInFlightBytes,
     );
-    const engine = new RepositorySyncEngine(repository, workspace, {
+    return new RepositorySyncEngine(repository, workspace, {
       concurrency: transferConcurrency,
       initialSyncPolicy: settings.initialSyncPolicy,
       assertSafePoint: () => this.assertRunConfiguration(revision),
@@ -567,6 +568,16 @@ export default class WebDavSyncPlugin extends Plugin implements SettingsControll
         await this.persistData();
       },
     });
+  }
+
+  private async runRepositorySync(
+    client: WebDavClient,
+    headUpdateStrategy: Exclude<HeadUpdateStrategy, null>,
+    conditionalCreate: boolean,
+    settings: WebDavSyncSettings,
+    revision: number,
+  ): Promise<RepositorySyncResult> {
+    const engine = this.buildRepositoryEngine(client, headUpdateStrategy, conditionalCreate, settings, revision);
 
     let result: RepositorySyncResult = { status: "retry", state: this.syncSession };
     for (let attempt = 0; attempt < settings.headUpdateMaxRetries; attempt += 1) {
@@ -583,6 +594,144 @@ export default class WebDavSyncPlugin extends Plugin implements SettingsControll
       }
     }
     return result;
+  }
+
+  forcePushLocal(): Promise<void> {
+    return this.runForcedSync("push-local");
+  }
+
+  forcePullRemote(): Promise<void> {
+    return this.runForcedSync("pull-remote");
+  }
+
+  async fetchCommitHistory(): Promise<CommitHistoryEntry[]> {
+    if (!this.isConfigured()) {
+      throw new Error("请先配置 WebDAV 服务器、远程目录、用户名和密码。");
+    }
+    const settings = { ...this.settings };
+    const client = this.createWebDavClient(settings, this.getPassword());
+    let capabilities = this.capabilityConfigKey === connectionConfigKey(settings)
+      ? this.capabilities
+      : null;
+    if (!capabilities) {
+      const probe = await client.probeCapabilities();
+      this.capabilities = probe.capabilities;
+      if (!probe.ok) {
+        this.capabilityConfigKey = null;
+        throw new Error(probe.error?.message ?? "WebDAV 能力检测失败。");
+      }
+      capabilities = probe.capabilities;
+      this.capabilityConfigKey = connectionConfigKey(settings);
+    }
+    const repository = new ContentAddressedRepository(client, {
+      headUpdateStrategy: capabilities.headUpdateStrategy ?? "etag",
+      conditionalCreate: capabilities.conditionalCreate,
+    });
+    return repository.listCommitHistory();
+  }
+
+  private async runForcedSync(direction: ForceSyncDirection): Promise<void> {
+    if (!["idle", "error", "conflict", "offline"].includes(this.state.current)) {
+      throw new Error("请等待当前同步任务完成后再执行强制恢复操作。");
+    }
+    if (!this.isConfigured()) {
+      throw new Error("请先配置 WebDAV 服务器、远程目录、用户名和密码。");
+    }
+    const startedAt = Date.now();
+    const revision = this.configRevision;
+    const runSettings = { ...this.settings };
+    const runPassword = this.getPassword();
+    try {
+      this.moveToIdleIfRecoverable();
+      this.state.transitionTo("scanning");
+      this.setSyncProgress({ phase: "initializing", completed: 0, total: 3, message: "准备远程连接" });
+      const client = this.createWebDavClient(runSettings, runPassword);
+      const capabilityKey = connectionConfigKey(runSettings);
+      const cachedCapabilities = this.capabilityConfigKey === capabilityKey
+        ? this.capabilities
+        : null;
+      if (cachedCapabilities) {
+        this.setSyncProgress({ phase: "initializing", completed: 2, total: 3, message: "确认远程目录" });
+        await client.ensureRemoteRoot();
+      } else {
+        this.setSyncProgress({ phase: "initializing", completed: 2, total: 3, message: "检测远程能力" });
+      }
+      const probe = cachedCapabilities
+        ? { ok: true as const, capabilities: cachedCapabilities }
+        : await client.probeCapabilities();
+      this.setSyncProgress({ phase: "initializing", completed: 3, total: 3, message: "检测远程能力" });
+      this.assertRunConfiguration(revision);
+      this.capabilities = probe.capabilities;
+      if (!probe.ok) {
+        this.capabilityConfigKey = null;
+        throw new Error(probe.error?.message ?? "WebDAV 能力检测失败。");
+      }
+      this.capabilityConfigKey = capabilityKey;
+      const headUpdateStrategy = probe.capabilities.headUpdateStrategy;
+      if (!probe.capabilities.safeConcurrentWrites || !headUpdateStrategy) {
+        throw new Error("强制恢复需要安全的并发写入能力，以及经过验证的 HEAD 更新策略。");
+      }
+      const engine = this.buildRepositoryEngine(
+        client,
+        headUpdateStrategy,
+        probe.capabilities.conditionalCreate,
+        runSettings,
+        revision,
+      );
+      this.state.transitionTo("planning");
+      this.setSyncProgress({ phase: "planning", completed: 0, total: 1, message: "规划同步" });
+      let result: RepositorySyncResult = { status: "retry", state: this.syncSession };
+      for (let attempt = 0; attempt < runSettings.headUpdateMaxRetries; attempt += 1) {
+        result = await engine.forceSync(this.syncSession, direction);
+        if (result.status !== "retry") break;
+        this.log.warn("强制操作期间远程 HEAD 或同步锁已变化，正在重试。", {
+          direction,
+          attempt: attempt + 1,
+          maxRetries: runSettings.headUpdateMaxRetries,
+        });
+        if (attempt + 1 < runSettings.headUpdateMaxRetries && runSettings.headUpdateRetryDelayMs > 0) {
+          await sleep(runSettings.headUpdateRetryDelayMs);
+          this.assertRunConfiguration(revision);
+        }
+      }
+      if (result.status === "retry") {
+        throw new Error("远程 HEAD 或同步锁连续变化，强制操作未能完成。请确认其他设备已停止同步后重试。");
+      }
+      if (result.status === "conflict") {
+        throw new Error(`强制操作意外返回冲突：${describeConflictReason(result.reason)}。`);
+      }
+      this.syncSession = result.state;
+      this.lastConflicts = [];
+      for (const path of Object.keys(this.conflictResolutions)) delete this.conflictResolutions[path];
+      this.changes.acknowledge(this.changes.snapshot());
+      this.addHistory(
+        ["manual"],
+        result.status,
+        startedAt,
+        0,
+        direction === "push-local" ? "已强制推送本地内容覆盖云端。" : "已强制拉取云端内容覆盖本地。",
+        result.status === "up-to-date" ? undefined : result.commitId,
+      );
+      await this.persistData();
+      this.log.info("强制恢复操作已完成。", {
+        direction,
+        ...(result.status === "up-to-date" ? {} : { commitId: result.commitId }),
+      });
+      this.clearSyncProgress();
+      this.state.transitionTo("idle");
+    } catch (error) {
+      this.clearSyncProgress();
+      if (this.state.current !== "conflict" && this.state.canTransitionTo("error")) {
+        this.state.transitionTo("error");
+      }
+      this.log.error("强制恢复操作失败。", error);
+      try {
+        await this.persistData();
+      } catch (persistError) {
+        this.log.error("无法保存同步历史。", persistError);
+      }
+      throw error;
+    }
   }
 
   private captureConflicts(result: Extract<RepositorySyncResult, { status: "conflict" }>): void {

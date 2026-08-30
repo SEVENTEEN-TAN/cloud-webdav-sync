@@ -1,4 +1,5 @@
 import { App, ConfirmationModal, Modal, Notice } from "obsidian";
+import type { CommitHistoryEntry } from "../repository";
 import type { SyncState } from "../core";
 import type { LogEntry, SyncHistoryEntry } from "../logging";
 import type { ConflictChoice, PendingChange } from "../sync";
@@ -29,14 +30,18 @@ export interface SyncCenterController {
   clearRemoteLock(): Promise<void>;
   openConflictResolver(): void;
   copyDiagnostics(): Promise<void>;
+  forcePushLocal(): Promise<void>;
+  forcePullRemote(): Promise<void>;
+  fetchCommitHistory(): Promise<CommitHistoryEntry[]>;
 }
 
-type SyncCenterTab = "overview" | "pending" | "history" | "logs" | "capabilities";
+type SyncCenterTab = "overview" | "pending" | "versions" | "history" | "logs" | "capabilities";
 type LogFilter = "all" | LogEntry["level"];
 
 const TABS: readonly { id: SyncCenterTab; label: string }[] = [
   { id: "overview", label: "概览" },
   { id: "pending", label: "待同步" },
+  { id: "versions", label: "版本" },
   { id: "history", label: "历史" },
   { id: "logs", label: "日志" },
   { id: "capabilities", label: "能力" },
@@ -45,6 +50,8 @@ const TABS: readonly { id: SyncCenterTab; label: string }[] = [
 export class SyncCenterModal extends Modal {
   private activeTab: SyncCenterTab = "overview";
   private logFilter: LogFilter = "all";
+  private commitHistory: CommitHistoryEntry[] | null = null;
+  private loadingCommitHistory = false;
 
   constructor(app: App, private readonly controller: SyncCenterController) {
     super(app);
@@ -69,6 +76,7 @@ export class SyncCenterModal extends Modal {
     const content = this.contentEl.createDiv({ cls: "webdav-sync-center-content" });
     if (this.activeTab === "overview") this.renderOverview(content, snapshot);
     if (this.activeTab === "pending") this.renderPending(content, snapshot.pending);
+    if (this.activeTab === "versions") this.renderVersions(content);
     if (this.activeTab === "history") this.renderHistory(content, snapshot.history);
     if (this.activeTab === "logs") this.renderLogs(content, snapshot.logs);
     if (this.activeTab === "capabilities") this.renderCapabilities(content, snapshot.capabilities);
@@ -187,6 +195,10 @@ export class SyncCenterModal extends Modal {
       });
     }
 
+    if (snapshot.conflicts.length > 0 || snapshot.state === "conflict") {
+      this.renderRecoveryActions(section);
+    }
+
     if (snapshot.pendingApply) {
       const callout = section.createDiv({ cls: "webdav-sync-callout is-warning" });
       callout.createEl("strong", { text: "可继续上次中断的远程更改应用" });
@@ -206,6 +218,100 @@ export class SyncCenterModal extends Modal {
         ? `${formatHistoryOutcome(latest.outcome)} · ${new Date(latest.finishedAt).toLocaleString()}`
         : "尚无记录",
     });
+  }
+
+  private renderRecoveryActions(section: HTMLElement): void {
+    const recovery = section.createDiv({ cls: "webdav-sync-callout" });
+    recovery.createEl("strong", { text: "冲突无法逐个解决时的强制恢复操作" });
+    recovery.createSpan({
+      text: "强制推送会用本地库内容完全替换云端（云端多出的文件将被删除）；强制拉取会用云端内容完全替换本地（本地多出的文件移入 .trash）。两者都会跳过大量删除保护和历史分叉检查，已提交的历史版本仍保留在云端仓库中。",
+    });
+    const actions = recovery.createDiv({ cls: "webdav-sync-recovery-actions" });
+    const pushButton = actions.createEl("button", { text: "强制推送本地到云端", cls: "mod-warning" });
+    const pullButton = actions.createEl("button", { text: "强制拉取云端到本地", cls: "mod-warning" });
+    const runForced = (direction: "push" | "pull") => {
+      pushButton.disabled = true;
+      pullButton.disabled = true;
+      const request = direction === "push"
+        ? this.controller.forcePushLocal()
+        : this.controller.forcePullRemote();
+      void request
+        .then(() => this.render())
+        .catch((error: unknown) => {
+          new Notice(`强制恢复失败：${formatError(error)}`, 10_000);
+          this.render();
+        });
+    };
+    pushButton.addEventListener("click", () => {
+      void confirmAction(
+        this.app,
+        "强制推送本地到云端",
+        "云端仓库内容将被本地库完全替换：云端多出的文件会被删除，本地版本覆盖同名文件。此操作会跳过大量删除保护和历史分叉检查；已提交的历史版本仍保留在仓库中。确定继续？",
+        "强制推送",
+      ).then((confirmed) => {
+        if (confirmed) runForced("push");
+      });
+    });
+    pullButton.addEventListener("click", () => {
+      void confirmAction(
+        this.app,
+        "强制拉取云端到本地",
+        "本地库将被云端仓库内容完全替换：本地多出的文件将移入 .trash，未推送的本地修改会丢失。确定继续？",
+        "强制拉取",
+      ).then((confirmed) => {
+        if (confirmed) runForced("pull");
+      });
+    });
+  }
+
+  private renderVersions(container: HTMLElement): void {
+    const section = container.createDiv({ cls: "webdav-sync-section" });
+    section.createEl("h3", { text: "云端提交历史" });
+    section.createEl("p", {
+      text: "每次同步都会在云端仓库生成一条不可变提交，类似 Git。列出最近从 HEAD 可达的提交；恢复某个历史状态可以使用概览页的强制推送/拉取。",
+      cls: "webdav-sync-muted",
+    });
+    const refresh = section.createEl("button", {
+      text: this.loadingCommitHistory ? "正在加载提交历史…" : "刷新提交历史",
+    });
+    refresh.disabled = this.loadingCommitHistory;
+    refresh.addEventListener("click", () => {
+      this.loadingCommitHistory = true;
+      this.render();
+      void this.controller.fetchCommitHistory()
+        .then((entries) => {
+          this.commitHistory = entries;
+        })
+        .catch((error: unknown) => {
+          this.commitHistory = null;
+          new Notice(`无法加载提交历史：${formatError(error)}`, 10_000);
+        })
+        .finally(() => {
+          this.loadingCommitHistory = false;
+          this.render();
+        });
+    });
+
+    if (this.commitHistory === null) {
+      section.createEl("p", {
+        text: "尚未加载提交历史。点击“刷新提交历史”从云端仓库读取。",
+        cls: "webdav-sync-empty",
+      });
+      return;
+    }
+    if (this.commitHistory.length === 0) {
+      section.createEl("p", { text: "云端仓库还没有任何提交。", cls: "webdav-sync-empty" });
+      return;
+    }
+    const list = section.createEl("ul", { cls: "webdav-sync-list webdav-sync-commit-list" });
+    for (const entry of this.commitHistory) {
+      const item = list.createEl("li");
+      const title = item.createDiv({ cls: "webdav-sync-commit-title" });
+      title.createEl("strong", { text: entry.commitId.slice(0, 12) });
+      title.createSpan({ text: new Date(entry.createdAt).toLocaleString() });
+      item.createDiv({ cls: "webdav-sync-commit-meta", text:
+        `设备 ${entry.deviceId} · ${entry.fileCount} 个文件 · 父提交 ${entry.parents.map((parent) => parent.slice(0, 8)).join(", ") || "无"}` });
+    }
   }
 
   private renderPending(container: HTMLElement, pending: readonly PendingChange[]): void {

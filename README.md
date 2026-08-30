@@ -4,7 +4,7 @@
 
 Cloud WebDAV Sync is an experimental sync plugin that stores notes and attachments in a WebDAV-backed repository. It uses content-addressed objects, validated commit snapshots, server capability checks, conflict detection, and a conflict resolution workspace to reduce accidental overwrites.
 
-Version `0.9.9` still defaults to planning-only mode. Real sync must be explicitly enabled in settings. When enabled, the plugin does not overwrite a plain remote folder file by file. Instead, it writes immutable SHA-256 blobs, verified commits, complete file trees, and a remote HEAD update strategy selected from the WebDAV server's detected capabilities.
+Version `0.10.0` still defaults to planning-only mode. Real sync must be explicitly enabled in settings. When enabled, the plugin does not overwrite a plain remote folder file by file. Instead, it writes immutable SHA-256 blobs, verified commits, complete file trees, and a remote HEAD update strategy selected from the WebDAV server's detected capabilities.
 
 ## Features
 
@@ -16,8 +16,10 @@ Version `0.9.9` still defaults to planning-only mode. Real sync must be explicit
 - Local change queue coalescing for create, modify, delete, and rename events.
 - Desktop status bar state and a cross-platform sync center.
 - Sync center sections for overview, pending changes, history, logs, and server capabilities.
-- Conflict workflow for switching between files, filtering unresolved items, and choosing the local or remote version.
+- Conflict workflow for switching between files, filtering unresolved items, and choosing the local or remote version, including bulk "use local everywhere" / "use remote everywhere" actions.
 - Markdown conflict preview with line numbers, local/remote comparison, diff highlighting, and synchronized scrolling.
+- Force recovery actions for conflicts that cannot be resolved per file: force push replaces the remote with local content, and force pull replaces local content with the remote (extra local files move to `.trash`). Both bypass large-delete protection and history divergence checks after explicit confirmation, and both keep prior commits in the repository.
+- A commit history view in the sync center that lists recent commits reachable from HEAD, like a lightweight `git log`.
 - Bounded in-memory logs with recursive credential and token redaction.
 - Password storage through the app's SecretStorage API instead of plugin `data.json`.
 - WebDAV capability probes for OPTIONS, conditional create, exclusive MKCOL, atomic MOVE/no-overwrite behavior, ETag reads through HEAD/PROPFIND, stale ETag rejection, and cleanup verification.
@@ -36,6 +38,8 @@ Real sync is disabled by default. In planning-only mode, the connection test cre
 When real sync is enabled, remote data is stored as immutable repository objects. Remote deletes are applied locally by moving files to `.trash`. Markdown conflicts stop the current commit and keep both sides in the repository until the user chooses a version. Binary conflicts preserve the local file and save the remote side as a deterministic `.conflict-<device>-<commit>` copy.
 
 Remote HEAD updates are guarded by server capability checks. Servers with correct conditional ETag behavior can use compare-and-swap updates. Servers that do not support that pattern can use an actively probed atomic MOVE/no-overwrite lease strategy.
+
+Conflicts that cannot be resolved by picking a file version — large-delete protection, diverged history, a reset remote, a repository identity mismatch, or an interrupted apply — leave sync paused with no automatic escape. The sync center then offers explicit force push / force pull recovery actions behind a confirmation dialog, so the local vault can always be pushed over the cloud (or vice versa) on purpose.
 
 ## Development
 
@@ -74,7 +78,7 @@ tests/          Unit and integration tests
 - The default transfer concurrency limit is 16; mobile runtime paths reduce it further.
 - First sync stops when the local vault and existing remote repository both contain unrelated files unless the user explicitly chooses an initial policy.
 - The conflict workflow supports local/remote selection, but does not yet provide a full manual merge editor.
-- Repository history exists as commits, but history browsing, rollback UI, garbage collection, and large-file chunking are not implemented yet.
+- Repository history exists as commits and can be viewed in the sync center, but rollback UI, garbage collection, and large-file chunking are not implemented yet.
 - Compatibility has been tested against real cloud WebDAV servers and Windows filesystem integration paths, but broader WebDAV server and mobile-device coverage still needs more validation.
 
 ## License

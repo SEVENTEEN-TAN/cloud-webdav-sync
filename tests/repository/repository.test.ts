@@ -308,3 +308,40 @@ test("keeps correct existing immutable objects idempotent", async () => {
   await repository.writeCommit(commit);
   await repository.writeCommit(commit);
 });
+
+test("lists commit history from HEAD ordered by newest first", async () => {
+  const repository = new ContentAddressedRepository(new MemoryRemote());
+  const metadata = await repository.initialize();
+  const createCommit = async (parents: string[], createdAt: string, files: Record<string, string>) => {
+    const tree: Record<string, { blob: string; size: number; kind: "text" }> = {};
+    for (const [path, content] of Object.entries(files)) {
+      const data = new TextEncoder().encode(content).buffer;
+      tree[path] = { blob: await sha256Hex(data), size: data.byteLength, kind: "text" };
+    }
+    const commit = await createStoredCommit({
+      formatVersion: 1,
+      repositoryId: metadata.repositoryId,
+      parents,
+      deviceId: "test",
+      createdAt,
+      files: tree,
+    });
+    await repository.writeCommit(commit);
+    return commit;
+  };
+
+  const first = await createCommit([], "2026-07-15T00:00:00.000Z", { "a.md": "a" });
+  const second = await createCommit([first.commitId], "2026-07-16T00:00:00.000Z", { "a.md": "a", "b.md": "b" });
+  const merge = await createCommit([first.commitId, second.commitId], "2026-07-17T00:00:00.000Z", { "a.md": "merged" });
+  const head = await repository.readHead();
+  await repository.compareAndSwapHead(head.etag, { commit: merge.commitId, generation: head.reference.generation + 1 });
+
+  const history = await repository.listCommitHistory();
+  assert.deepEqual(history.map(({ commitId }) => commitId), [merge.commitId, second.commitId, first.commitId]);
+  assert.equal(history[1]?.fileCount, 2);
+  assert.deepEqual(history[1]?.parents, [first.commitId]);
+  assert.deepEqual(await repository.listCommitHistory(1).then((entries) => entries.length), 1);
+
+  const emptyRepository = new ContentAddressedRepository(new MemoryRemote());
+  assert.deepEqual(await emptyRepository.listCommitHistory(), []);
+});

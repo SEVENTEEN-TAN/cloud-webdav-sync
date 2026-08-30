@@ -6,7 +6,7 @@ Cloud WebDAV Sync is an experimental sync plugin that stores notes and attachmen
 
 一个实验性的 Obsidian 插件，用于通过 WebDAV 安全地同步知识库（Vault）。
 
-版本 `0.9.9` 默认仍使用“仅规划”模式，并提供需要用户明确开启的实验性真实同步开关。真实同步不会直接逐文件覆盖 WebDAV 目录，而是使用不可变的 SHA-256 Blob、经过校验的 Commit、完整文件树，以及根据服务器能力选择的 HEAD 更新策略。正确实现条件 ETag 的服务器会使用比较并交换（compare-and-swap）；部分云盘 WebDAV 服务则可使用经过主动探测验证的原子 `MOVE`/禁止覆盖租约。
+版本 `0.10.0` 默认仍使用“仅规划”模式，并提供需要用户明确开启的实验性真实同步开关。真实同步不会直接逐文件覆盖 WebDAV 目录，而是使用不可变的 SHA-256 Blob、经过校验的 Commit、完整文件树，以及根据服务器能力选择的 HEAD 更新策略。正确实现条件 ETag 的服务器会使用比较并交换（compare-and-swap）；部分云盘 WebDAV 服务则可使用经过主动探测验证的原子 `MOVE`/禁止覆盖租约。
 
 ## 当前功能
 
@@ -17,9 +17,11 @@ Cloud WebDAV Sync is an experimental sync plugin that stores notes and attachmen
 - 单航班调度（single-flight）：完整同步任务不会重叠；同步期间收到的新请求会合并为任务完成后的一次后续同步。
 - 本地待同步队列可合并新建、修改、删除和重命名事件。
 - 桌面端状态栏状态，以及跨平台的同步中心窗口。
-- 同步中心采用概览、待同步、历史、日志和能力分区；诊断信息不会再默认和操作流程混在同一页面。
-- 存在冲突时，点击桌面端底部状态栏会直接打开冲突解决工作台；可在多个冲突文件间切换、筛选并依次选择本地或远程版本。
+- 同步中心采用概览、待同步、版本、历史、日志和能力分区；诊断信息不会再默认和操作流程混在同一页面。
+- 存在冲突时，点击桌面端底部状态栏会直接打开冲突解决工作台；可在多个冲突文件间切换、筛选并依次选择本地或远程版本，也支持一键“全部使用本地/全部使用远程”。
 - Markdown 冲突工作台保留 BASE / LOCAL / REMOTE 完整文本于运行时内存，界面展示本地和远程两栏差异高亮与同步滚动；所有可解决冲突都有选择后才能继续同步。
+- 提供需要明确确认的强制恢复操作：强制推送用本地内容完全覆盖云端，强制拉取用云端内容完全覆盖本地（本地多出的文件移入 `.trash`）。两者会跳过大规模删除保护与历史分叉检查，用于解决无法逐文件选择的历史分叉、远程重置、仓库标识不匹配、大规模删除保护等冲突；已提交的历史版本仍保留在云端仓库中。
+- 同步中心新增“版本”分区，可查看从 HEAD 可达的最近提交记录（类似轻量 `git log`），包含提交 ID、时间、设备和文件数量。
 - 有界内存日志，并对凭据和 Token 进行递归脱敏。
 - 通过 Obsidian SecretStorage（安全凭据存储）保存密码。
 - WebDAV 能力探测覆盖 OPTIONS、条件创建、MKCOL 排他性、原子 MOVE/禁止覆盖、通过 HEAD/PROPFIND 获取 ETag、过期 ETag 拒绝，以及清理结果验证。
@@ -52,6 +54,8 @@ Cloud WebDAV Sync is an experimental sync plugin that stores notes and attachmen
 
 用户明确启用真实同步后，远程内容会保存为不可变的仓库对象。远程删除应用到本地时，文件会被移动到 Obsidian 的 `.trash` 文件夹。Markdown 编辑发生冲突时，本次 Commit 会停止，并在仓库中保留双方版本；二进制文件被并发修改时，本地版本保留在原路径，远程版本则另存为 `.conflict-<device>-<commit>` 副本。远程 HEAD 更新前会阻止大规模删除。
 
+无法通过逐文件选择解决的冲突（大规模删除保护、历史分叉、远程仓库重置、仓库标识不匹配、中断的应用恢复）会让同步保持暂停。此时同步中心会在明确确认后提供强制推送/强制拉取恢复操作，确保本地内容始终可以有意地覆盖云端（或反向恢复）。
+
 真实同步启用后，插件会自动初始化仓库子文件夹和元数据。对于忽略 `If-None-Match: *` 的 WebDAV 服务，初始化过程会通过探测验证过的原子 MOVE 租约串行执行，并回读不可变对象以校验完整性。
 
 ## 开发
@@ -66,7 +70,7 @@ npm run build
 
 ## 发布
 
-GitHub Actions 中的 `Build release package` 可以手动触发，也会在推送与 `manifest.json` 版本完全一致的 tag 时触发。例如版本 `0.9.9` 应使用 tag `0.9.9`，不要使用 `v0.9.9`。
+GitHub Actions 中的 `Build release package` 可以手动触发，也会在推送与 `manifest.json` 版本完全一致的 tag 时触发。例如版本 `0.10.0` 应使用 tag `0.10.0`，不要使用 `v0.10.0`。
 
 发布流程会运行 `npm ci`、`npm run build`，然后将 `main.js`、`manifest.json` 和 `styles.css` 作为 GitHub Release 附件直接上传。
 

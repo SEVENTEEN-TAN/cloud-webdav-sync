@@ -802,3 +802,116 @@ function equalBuffers(left: ArrayBuffer, right: ArrayBuffer): boolean {
   return left.byteLength === right.byteLength &&
     new Uint8Array(left).every((value, index) => value === new Uint8Array(right)[index]);
 }
+
+test("forces a local push over a diverged remote history", async () => {
+  const remote = new MemoryRemote();
+  const workspace = new MemoryWorkspace({ "note.md": "base" });
+  const repository = new ContentAddressedRepository(remote);
+  const engine = new RepositorySyncEngine(repository, workspace, { now: fixedNow });
+  const first = await engine.sync(initialState("device"));
+  const base = await repository.readCommit(first.state.baseCommitId as string);
+  const divergent = await createStoredCommit({
+    formatVersion: 1,
+    repositoryId: base.repositoryId,
+    parents: [],
+    deviceId: "manual-rewrite",
+    createdAt: "2026-07-15T01:00:00.000Z",
+    files: {},
+  });
+  await repository.writeCommit(divergent);
+  const head = await repository.readHead();
+  await repository.compareAndSwapHead(head.etag, {
+    commit: divergent.commitId,
+    generation: head.reference.generation + 1,
+  });
+
+  const conflicting = await engine.sync(first.state);
+  assert.equal(conflicting.status === "conflict" && conflicting.reason, "history-diverged");
+
+  workspace.setText("note.md", "local wins");
+  workspace.setText("extra.md", "new local file");
+  const forced = await engine.forceSync(first.state, "push-local");
+
+  assert.equal(forced.status, "pushed");
+  assert.equal(forced.status === "pushed" && forced.commitId, forced.state.baseCommitId);
+  const pushedCommit = await repository.readCommit(forced.state.baseCommitId as string);
+  assert.deepEqual(pushedCommit.parents, [divergent.commitId]);
+  const next = await engine.sync(forced.state);
+  assert.equal(next.status, "up-to-date");
+});
+
+test("forces a push that bypasses mass-delete protection", async () => {
+  const remote = new MemoryRemote();
+  const initial = Object.fromEntries(
+    Array.from({ length: 25 }, (_, index) => [`note-${index}.md`, `content ${index}`]),
+  );
+  const workspace = new MemoryWorkspace(initial);
+  const repository = new ContentAddressedRepository(remote);
+  const engine = new RepositorySyncEngine(repository, workspace, { now: fixedNow });
+  const first = await engine.sync(initialState("device"));
+  workspace.files.clear();
+  workspace.setText("kept.md", "only survivor");
+
+  const blocked = await engine.sync(first.state);
+  assert.equal(blocked.status === "conflict" && blocked.reason, "mass-delete");
+
+  const forced = await engine.forceSync(first.state, "push-local");
+  assert.equal(forced.status, "pushed");
+  const headCommit = await repository.readCommit((await repository.readHead()).reference.commit as string);
+  assert.deepEqual(Object.keys(headCommit.files), ["kept.md"]);
+  const next = await engine.sync(forced.state);
+  assert.equal(next.status, "up-to-date");
+});
+
+test("force pull replaces local edits with the exact remote tree", async () => {
+  const remote = new MemoryRemote();
+  const a = new MemoryWorkspace({ "note.md": "from a" });
+  const b = new MemoryWorkspace();
+  const engineA = new RepositorySyncEngine(new ContentAddressedRepository(remote), a, { now: fixedNow });
+  const engineB = new RepositorySyncEngine(new ContentAddressedRepository(remote), b, { now: fixedNow });
+  const pushed = await engineA.sync(initialState("device-a"));
+  const pulled = await engineB.sync(initialState("device-b"));
+  assert.equal(pushed.status, "pushed");
+  assert.equal(pulled.status, "pulled");
+
+  b.setText("note.md", "local edit on b");
+  b.setText("b-only.md", "only on b");
+
+  const forced = await engineB.forceSync(pulled.state, "pull-remote");
+  assert.equal(forced.status, "pulled");
+  assert.equal(b.getText("note.md"), "from a");
+  assert.equal(b.files.has("b-only.md"), false);
+  const next = await engineB.sync(forced.state);
+  assert.equal(next.status, "up-to-date");
+});
+
+test("force pull refuses when the remote repository has no commits", async () => {
+  const remote = new MemoryRemote();
+  const workspace = new MemoryWorkspace({ "note.md": "local" });
+  const engine = new RepositorySyncEngine(new ContentAddressedRepository(remote), workspace, { now: fixedNow });
+  await assert.rejects(
+    () => engine.forceSync(initialState("device"), "pull-remote"),
+    /nothing to force pull/,
+  );
+  assert.equal(workspace.getText("note.md"), "local");
+});
+
+test("force sync adopts the remote repository identity after a repository mismatch", async () => {
+  const remote = new MemoryRemote();
+  const a = new MemoryWorkspace({ "note.md": "from a" });
+  const engineA = new RepositorySyncEngine(new ContentAddressedRepository(remote), a, { now: fixedNow });
+  const pushed = await engineA.sync(initialState("device-a"));
+
+  const b = new MemoryWorkspace({ "local.md": "from b" });
+  const engineB = new RepositorySyncEngine(new ContentAddressedRepository(remote), b, { now: fixedNow });
+  const mismatchedState = { ...initialState("device-b"), repositoryId: "00000000-0000-4000-8000-000000000000" };
+  const conflicting = await engineB.sync(mismatchedState);
+  assert.equal(conflicting.status === "conflict" && conflicting.reason, "repository-mismatch");
+
+  const forced = await engineB.forceSync(mismatchedState, "push-local");
+  assert.equal(forced.status, "pushed");
+  assert.notEqual(forced.state.repositoryId, mismatchedState.repositoryId);
+  const headCommit = await new ContentAddressedRepository(remote)
+    .readCommit((await new ContentAddressedRepository(remote).readHead()).reference.commit as string);
+  assert.deepEqual(Object.keys(headCommit.files), ["local.md"]);
+});

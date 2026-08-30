@@ -1,6 +1,7 @@
 import { App, Modal, Notice } from "obsidian";
 import type { ConflictChoice } from "../sync";
 import {
+  chooseAllConflictPaths,
   chooseInitialConflictPath,
   filterConflicts,
   getConflictResolutionProgress,
@@ -126,7 +127,9 @@ export class ConflictResolverModal extends Modal {
     if (!conflict.canResolve) {
       const callout = container.createDiv({ cls: "webdav-sync-callout is-warning" });
       callout.createEl("strong", { text: "该冲突不能通过选择文件版本自动处理" });
-      callout.createSpan({ text: "请检查仓库配置、同步历史或大量删除保护提示，然后重新运行同步。" });
+      callout.createSpan({
+        text: "请打开同步中心的“概览”页，使用强制推送（本地覆盖云端）或强制拉取（云端覆盖本地）恢复操作；或检查仓库配置后重新运行同步。",
+      });
       return;
     }
 
@@ -211,6 +214,20 @@ export class ConflictResolverModal extends Modal {
       this.selectedPath = moveConflictSelection(snapshot.conflicts, this.selectedPath, 1);
       this.render();
     });
+    const progress = getConflictResolutionProgress(snapshot.conflicts);
+    for (const choice of ["local", "remote"] as const) {
+      const bulk = footer.createEl("button", {
+        text: choice === "local" ? "全部使用本地" : "全部使用远程",
+        cls: "webdav-conflict-bulk-choice",
+      });
+      bulk.disabled = progress.unresolved === 0;
+      bulk.addEventListener("click", () => {
+        for (const path of chooseAllConflictPaths(snapshot.conflicts, choice)) {
+          this.controller.chooseConflict(path, choice);
+        }
+        this.render();
+      });
+    }
     const spacer = footer.createDiv({ cls: "webdav-conflict-footer-spacer" });
     spacer.createSpan({ text: canContinue ? "所有冲突已处理，可以继续同步。" : "全部冲突处理完成后才能继续同步。" });
     const complete = footer.createEl("button", {

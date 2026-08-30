@@ -6,6 +6,7 @@ import {
   createStoredCommit,
   sha256Hex,
   type BlobPackWriteRequest,
+  type HeadSnapshot,
   type RepositoryFileEntry,
   type RepositoryTree,
   type StoredCommit,
@@ -70,6 +71,8 @@ export interface SyncEngineOptions {
 export type InitialSyncPolicy = "stop" | "prefer-local" | "prefer-remote";
 
 export type ConflictChoice = "local" | "remote";
+
+export type ForceSyncDirection = "push-local" | "pull-remote";
 
 export interface ConflictResolution {
   choice: ConflictChoice;
@@ -268,6 +271,61 @@ export class RepositorySyncEngine {
     );
   }
 
+  async forceSync(
+    state: SyncSessionState,
+    direction: ForceSyncDirection,
+  ): Promise<RepositorySyncResult> {
+    this.assertSafePoint();
+    this.reportProgress({ phase: "initializing", completed: 0, total: 1, message: "初始化远程仓库" });
+    const metadata = await this.repository.initialize(this.now());
+    this.reportProgress({ phase: "initializing", completed: 1, total: 1, message: "初始化远程仓库" });
+    this.assertSafePoint();
+    const head = await this.repository.readHead();
+    const localTree = await this.scanWorkspace();
+    this.reportProgress({ phase: "planning", completed: 0, total: 1, message: "规划同步" });
+    if (direction === "pull-remote") {
+      return this.forcePullRemote(state, metadata.repositoryId, head, localTree);
+    }
+    return this.forcePushLocal(state, metadata.repositoryId, head, localTree);
+  }
+
+  private async forcePushLocal(
+    state: SyncSessionState,
+    repositoryId: string,
+    head: HeadSnapshot,
+    localTree: RepositoryTree,
+  ): Promise<RepositorySyncResult> {
+    const parentCommitId = head.reference.commit;
+    const baseline = parentCommitId
+      ? (await this.repository.readCommit(parentCommitId)).files
+      : {};
+    this.reportProgress({ phase: "planning", completed: 1, total: 1, message: "规划同步" });
+    return this.pushTree(
+      state,
+      repositoryId,
+      head.etag,
+      head.reference.generation,
+      localTree,
+      parentCommitId ? [parentCommitId] : [],
+      baseline,
+      { force: true },
+    );
+  }
+
+  private async forcePullRemote(
+    state: SyncSessionState,
+    repositoryId: string,
+    head: HeadSnapshot,
+    localTree: RepositoryTree,
+  ): Promise<RepositorySyncResult> {
+    if (head.reference.commit === null) {
+      throw new Error("The remote repository is empty, so there is nothing to force pull.");
+    }
+    const remoteCommit = await this.repository.readCommit(head.reference.commit);
+    this.reportProgress({ phase: "planning", completed: 1, total: 1, message: "规划同步" });
+    return this.applyCommit("pulled", state, repositoryId, remoteCommit, null, localTree);
+  }
+
   private async scanWorkspace(): Promise<RepositoryTree> {
     let reported = false;
     this.reportProgress({ phase: "scanning", completed: 0, total: 1, message: "扫描知识库" });
@@ -294,8 +352,9 @@ export class RepositorySyncEngine {
     tree: RepositoryTree,
     parents: string[],
     baseline: RepositoryTree,
+    options: { force?: boolean } = {},
   ): Promise<RepositorySyncResult> {
-    if (isMassDelete(baseline, tree)) {
+    if (!options.force && isMassDelete(baseline, tree)) {
       return { status: "conflict", state, reason: "mass-delete" };
     }
     await this.uploadChangedBlobs(tree, baseline, new Map());

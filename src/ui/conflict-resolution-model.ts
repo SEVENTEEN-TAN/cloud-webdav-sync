@@ -36,6 +36,15 @@ export function filterConflicts<T extends ConflictResolutionListItem>(
   return conflicts.filter(({ choice }) => filter === "resolved" ? choice !== undefined : choice === undefined);
 }
 
+export function chooseAllConflictPaths<T extends ConflictResolutionListItem>(
+  conflicts: readonly T[],
+  choice: ConflictChoice,
+): string[] {
+  return conflicts
+    .filter(({ canResolve, choice: chosen }) => canResolve && chosen === undefined)
+    .map(({ path }) => path);
+}
+
 export function chooseInitialConflictPath(
   conflicts: readonly ConflictResolutionListItem[],
 ): string | null {

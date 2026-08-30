@@ -193,6 +193,38 @@
   margin-top: var(--size-4-1);
 }
 
+.webdav-sync-recovery-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--size-4-2);
+  justify-self: start;
+}
+
+.webdav-sync-commit-list li {
+  padding: var(--size-4-2) 0;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.webdav-sync-commit-title {
+  display: flex;
+  gap: var(--size-4-2);
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.webdav-sync-commit-title span {
+  color: var(--text-muted);
+}
+
+.webdav-sync-commit-meta {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.webdav-conflict-bulk-choice {
+  color: var(--text-normal);
+}
+
 .webdav-sync-overview-detail {
   display: grid;
   gap: var(--size-4-1);

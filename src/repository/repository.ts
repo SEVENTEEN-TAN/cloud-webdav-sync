@@ -31,8 +31,18 @@ export interface BlobPackWriteRequest {
   kind: RepositoryFileEntry["kind"];
 }
 
+export interface CommitHistoryEntry {
+  commitId: string;
+  parents: string[];
+  deviceId: string;
+  createdAt: string;
+  fileCount: number;
+}
+
 const DEFAULT_MAX_PACKED_BLOB_BYTES = 256 * 1_024;
 const DEFAULT_MAX_BLOB_PACK_BYTES = 8 * 1_024 * 1_024;
+const DEFAULT_HISTORY_LIMIT = 30;
+const MAX_HISTORY_LIMIT = 200;
 
 export class ContentAddressedRepository {
   private metadata: RepositoryMetadata | null = null;
@@ -212,6 +222,31 @@ export class ContentAddressedRepository {
       throw new Error(`Commit ${commitId} failed integrity verification.`);
     }
     return commit;
+  }
+
+  async listCommitHistory(limit = DEFAULT_HISTORY_LIMIT): Promise<CommitHistoryEntry[]> {
+    const boundedLimit = Math.min(Math.max(Math.floor(limit), 1), MAX_HISTORY_LIMIT);
+    await this.initialize(this.now());
+    const head = await this.readHead();
+    if (head.reference.commit === null) return [];
+    const visited = new Set<string>();
+    const pending = [head.reference.commit];
+    const entries: CommitHistoryEntry[] = [];
+    while (pending.length > 0 && visited.size < boundedLimit) {
+      const commitId = pending.shift() as string;
+      if (visited.has(commitId)) continue;
+      visited.add(commitId);
+      const commit = await this.readCommit(commitId);
+      entries.push({
+        commitId: commit.commitId,
+        parents: [...commit.parents],
+        deviceId: commit.deviceId,
+        createdAt: commit.createdAt,
+        fileCount: Object.keys(commit.files).length,
+      });
+      pending.push(...commit.parents);
+    }
+    return entries.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   }
 
   async readHead(): Promise<HeadSnapshot> {
