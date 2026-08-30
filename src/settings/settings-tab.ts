@@ -1,4 +1,12 @@
-import { App, ConfirmationModal, Notice, Plugin, PluginSettingTab, Setting } from "obsidian";
+import {
+  App,
+  ConfirmationModal,
+  Notice,
+  Plugin,
+  PluginSettingTab,
+  Setting,
+  type SettingDefinitionItem,
+} from "obsidian";
 import type { WebDavSyncSettings } from "./settings";
 
 export interface SettingsController {
@@ -15,6 +23,17 @@ export interface SettingsController {
 export class WebDavSyncSettingTab extends PluginSettingTab {
   constructor(app: App, private readonly owner: Plugin & SettingsController) {
     super(app, owner);
+  }
+
+  getSettingDefinitions(): SettingDefinitionItem[] {
+    return [{
+      name: "WebDAV 同步设置",
+      aliases: ["WebDAV", "同步", "服务器", "远程", "密码", "自动同步", "实际同步"],
+      desc: "配置 WebDAV 连接、同步行为和恢复选项。",
+      render: () => {
+        this.display();
+      },
+    }];
   }
 
   display(): void {
@@ -168,12 +187,12 @@ export class WebDavSyncSettingTab extends PluginSettingTab {
 
     new Setting(this.containerEl)
       .setName("远程 HEAD 最大重试次数")
-      .setDesc("提交期间远程 HEAD 或同步锁发生竞争时，最多重新规划并重试多少次（1～20）。")
+      .setDesc("首次尝试后，远程 HEAD 或同步锁发生竞争时最多重新规划并重试多少次（0～20）。")
       .addText((text) => text
         .setValue(String(this.owner.settings.headUpdateMaxRetries))
         .onChange((value) => {
           const retries = Number(value);
-          if (Number.isInteger(retries) && retries >= 1 && retries <= 20) {
+          if (Number.isInteger(retries) && retries >= 0 && retries <= 20) {
             this.saveSetting({ headUpdateMaxRetries: retries });
           }
         }));

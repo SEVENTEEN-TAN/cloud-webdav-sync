@@ -22,12 +22,13 @@ test("normalizes persisted settings and rejects invalid numeric values", () => {
   assert.equal(settings.autoSync, false);
   assert.equal(settings.fileChangeDelayMs, DEFAULT_SETTINGS.fileChangeDelayMs);
   assert.equal(settings.remotePollMinutes, DEFAULT_SETTINGS.remotePollMinutes);
-  assert.equal(settings.headUpdateMaxRetries, DEFAULT_SETTINGS.headUpdateMaxRetries);
+  assert.equal(settings.headUpdateMaxRetries, 0);
   assert.equal(settings.headUpdateRetryDelayMs, DEFAULT_SETTINGS.headUpdateRetryDelayMs);
   assert.equal(settings.initialSyncPolicy, "stop");
 });
 
 test("bounds remote HEAD retry settings", () => {
+  assert.equal(normalizeSettings({ headUpdateMaxRetries: 0 }).headUpdateMaxRetries, 0);
   assert.equal(normalizeSettings({ headUpdateMaxRetries: 1 }).headUpdateMaxRetries, 1);
   assert.equal(normalizeSettings({ headUpdateMaxRetries: 20 }).headUpdateMaxRetries, 20);
   assert.equal(normalizeSettings({ headUpdateMaxRetries: 100 }).headUpdateMaxRetries, 20);

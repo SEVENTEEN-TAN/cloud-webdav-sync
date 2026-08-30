@@ -323,7 +323,12 @@ export class RepositorySyncEngine {
     }
     const remoteCommit = await this.repository.readCommit(head.reference.commit);
     this.reportProgress({ phase: "planning", completed: 1, total: 1, message: "规划同步" });
-    return this.applyCommit("pulled", state, repositoryId, remoteCommit, null, localTree);
+    const sourceCommitId = await this.writeLocalRecoverySnapshot(
+      repositoryId,
+      state.deviceId,
+      localTree,
+    );
+    return this.applyCommit("pulled", state, repositoryId, remoteCommit, sourceCommitId, localTree);
   }
 
   private async scanWorkspace(): Promise<RepositoryTree> {

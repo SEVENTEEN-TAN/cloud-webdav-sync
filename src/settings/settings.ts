@@ -45,7 +45,7 @@ export function normalizeSettings(value: unknown): WebDavSyncSettings {
     syncOnStartup: readBoolean(input.syncOnStartup, DEFAULT_SETTINGS.syncOnStartup),
     fileChangeDelayMs: readPositiveNumber(input.fileChangeDelayMs, DEFAULT_SETTINGS.fileChangeDelayMs),
     remotePollMinutes: readPositiveNumber(input.remotePollMinutes, DEFAULT_SETTINGS.remotePollMinutes),
-    headUpdateMaxRetries: readBoundedInteger(input.headUpdateMaxRetries, DEFAULT_SETTINGS.headUpdateMaxRetries, 1, 20),
+    headUpdateMaxRetries: readBoundedInteger(input.headUpdateMaxRetries, DEFAULT_SETTINGS.headUpdateMaxRetries, 0, 20),
     headUpdateRetryDelayMs: readNonNegativeNumber(
       input.headUpdateRetryDelayMs,
       DEFAULT_SETTINGS.headUpdateRetryDelayMs,

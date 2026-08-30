@@ -35,7 +35,7 @@ export class RetryingWebDavTransport implements WebDavTransport {
     this.maxRetries = options.maxRetries ?? DEFAULT_MAX_RETRIES;
     this.baseDelayMs = options.baseDelayMs ?? DEFAULT_BASE_DELAY_MS;
     this.maxDelayMs = options.maxDelayMs ?? DEFAULT_MAX_DELAY_MS;
-    this.sleep = options.sleep ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
+    this.sleep = options.sleep ?? ((milliseconds) => new Promise((resolve) => window.setTimeout(resolve, milliseconds)));
     this.onRetry = options.onRetry;
     if (!Number.isInteger(this.maxRetries) || this.maxRetries < 0) {
       throw new RangeError("maxRetries must be a non-negative integer.");

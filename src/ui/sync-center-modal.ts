@@ -196,7 +196,7 @@ export class SyncCenterModal extends Modal {
     }
 
     if (snapshot.conflicts.length > 0 || snapshot.state === "conflict") {
-      this.renderRecoveryActions(section);
+      this.renderRecoveryActions(section, snapshot.realSyncEnabled);
     }
 
     if (snapshot.pendingApply) {
@@ -220,15 +220,19 @@ export class SyncCenterModal extends Modal {
     });
   }
 
-  private renderRecoveryActions(section: HTMLElement): void {
+  private renderRecoveryActions(section: HTMLElement, realSyncEnabled: boolean): void {
     const recovery = section.createDiv({ cls: "webdav-sync-callout" });
     recovery.createEl("strong", { text: "冲突无法逐个解决时的强制恢复操作" });
     recovery.createSpan({
-      text: "强制推送会用本地库内容完全替换云端（云端多出的文件将被删除）；强制拉取会用云端内容完全替换本地（本地多出的文件移入 .trash）。两者都会跳过大量删除保护和历史分叉检查，已提交的历史版本仍保留在云端仓库中。",
+      text: realSyncEnabled
+        ? "强制推送会用本地库内容完全替换云端（云端多出的文件将被删除）；强制拉取会用云端内容完全替换本地（本地多出的文件移入 .trash）。两者都会跳过大量删除保护和历史分叉检查；旧提交可能仍保存在云端，但版本列表只展示当前 HEAD 可达的提交。"
+        : "当前处于仅规划模式。请先在设置中启用“实际同步”，才能执行会改动本地或云端内容的强制恢复操作。",
     });
     const actions = recovery.createDiv({ cls: "webdav-sync-recovery-actions" });
     const pushButton = actions.createEl("button", { text: "强制推送本地到云端", cls: "mod-warning" });
     const pullButton = actions.createEl("button", { text: "强制拉取云端到本地", cls: "mod-warning" });
+    pushButton.disabled = !realSyncEnabled;
+    pullButton.disabled = !realSyncEnabled;
     const runForced = (direction: "push" | "pull") => {
       pushButton.disabled = true;
       pullButton.disabled = true;
@@ -268,7 +272,7 @@ export class SyncCenterModal extends Modal {
     const section = container.createDiv({ cls: "webdav-sync-section" });
     section.createEl("h3", { text: "云端提交历史" });
     section.createEl("p", {
-      text: "每次同步都会在云端仓库生成一条不可变提交，类似 Git。列出最近从 HEAD 可达的提交；恢复某个历史状态可以使用概览页的强制推送/拉取。",
+      text: "每次同步都会在云端仓库生成一条不可变提交，类似 Git。这里只读取并列出最近从当前 HEAD 可达的提交；不可达旧提交和恢复快照不会显示，且尚未提供历史回滚。",
       cls: "webdav-sync-muted",
     });
     const refresh = section.createEl("button", {
