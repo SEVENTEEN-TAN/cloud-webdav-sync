@@ -212,6 +212,16 @@ export default class WebDavSyncPlugin extends Plugin implements SettingsControll
     }
   }
 
+  async clearHistoryAndLogs(): Promise<void> {
+    if (!["idle", "error", "conflict", "offline"].includes(this.state.current)) {
+      throw new Error("请等待当前同步任务停止后再清除历史和日志。");
+    }
+    this.syncHistory = [];
+    this.log.clear();
+    await this.persistData();
+    this.log.info("已清除同步历史与运行日志。");
+  }
+
   async testConnection(): Promise<string> {
     const revision = this.configRevision;
     const settings = { ...this.settings };

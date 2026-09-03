@@ -86,3 +86,21 @@ test("an unreadable context cannot interrupt the caller", () => {
   assert.doesNotThrow(() => log.error("sync failed", context));
   assert.match(JSON.stringify(log.snapshot()), /Unserializable context/);
 });
+
+test("clear empties entries and resets the byte budget", () => {
+  const log = new BoundedMemoryLog({ maxEntries: 10, maxBytes: 4_096, now: () => 123 });
+  log.info("one");
+  log.warn("two", { detail: 42 });
+  assert.equal(log.size, 2);
+  assert.ok(log.sizeBytes > 0);
+
+  log.clear();
+
+  assert.deepEqual(log.snapshot(), []);
+  assert.equal(log.size, 0);
+  assert.equal(log.sizeBytes, 0);
+
+  log.error("three");
+  assert.equal(log.size, 1);
+  assert.ok(log.sizeBytes > 0);
+});

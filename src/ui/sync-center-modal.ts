@@ -28,6 +28,7 @@ export interface SyncCenterController {
   getSnapshot(): SyncCenterSnapshot;
   runManualSync(): Promise<void>;
   clearRemoteLock(): Promise<void>;
+  clearHistoryAndLogs(): Promise<void>;
   openConflictResolver(): void;
   copyDiagnostics(): Promise<void>;
   forcePushLocal(): Promise<void>;
@@ -124,6 +125,28 @@ export class SyncCenterModal extends Modal {
         .then(() => new Notice("已复制 WebDAV 同步诊断信息。"))
         .catch((error: unknown) => new Notice(`无法复制诊断信息：${formatError(error)}`))
         .finally(() => { copyButton.disabled = false; });
+    });
+
+    const clearButton = actions.createEl("button", { text: "清除历史和日志" });
+    clearButton.addEventListener("click", () => {
+      void confirmAction(
+        this.app,
+        "清除历史和日志",
+        "将永久删除本设备保存的同步历史记录，并清空运行日志。云端仓库与本地笔记不受影响。",
+        "清除",
+      ).then((confirmed) => {
+        if (!confirmed) return;
+        clearButton.disabled = true;
+        void this.controller.clearHistoryAndLogs()
+          .then(() => {
+            new Notice("已清除同步历史与运行日志。");
+            this.render();
+          })
+          .catch((error: unknown) => {
+            new Notice(`清除历史和日志失败：${formatError(error)}`, 10_000);
+            clearButton.disabled = false;
+          });
+      });
     });
   }
 

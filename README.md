@@ -21,6 +21,7 @@ Version `0.10.3` still defaults to planning-only mode. Real sync must be explici
 - Force recovery actions for conflicts that cannot be resolved per file: force push replaces the remote with local content, and force pull replaces local content with the remote (extra local files move to `.trash`). Both bypass large-delete protection and history divergence checks after explicit confirmation, and both keep prior commits in the repository.
 - A commit history view in the sync center that lists recent commits reachable from HEAD, like a lightweight `git log`.
 - Bounded in-memory logs with recursive credential and token redaction.
+- A confirmation-guarded action in the sync center to clear the persisted sync history and the in-memory logs on this device; the remote repository and local notes are untouched.
 - Password storage through the app's SecretStorage API instead of plugin `data.json`.
 - WebDAV capability probes for OPTIONS, conditional create, exclusive MKCOL, atomic MOVE/no-overwrite behavior, ETag reads through HEAD/PROPFIND, stale ETag rejection, and cleanup verification.
 - First-device push to an empty repository and empty-device pull from an existing repository.
