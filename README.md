@@ -16,6 +16,7 @@ Version `0.10.3` still defaults to planning-only mode. Real sync must be explici
 - Local change queue coalescing for create, modify, delete, and rename events.
 - Desktop status bar state and a cross-platform sync center.
 - Sync center sections for overview, pending changes, history, logs, and server capabilities.
+- Interface language switchable in settings: follow Obsidian, Simplified Chinese, or English — covering the settings tab, sync center, conflict resolver, notices, logs, and status bar.
 - Conflict workflow for switching between files, filtering unresolved items, and choosing the local or remote version, including bulk "use local everywhere" / "use remote everywhere" actions.
 - Markdown conflict preview with line numbers, local/remote comparison, diff highlighting, and synchronized scrolling.
 - Force recovery actions for conflicts that cannot be resolved per file: force push replaces the remote with local content, and force pull replaces local content with the remote (extra local files move to `.trash`). Both bypass large-delete protection and history divergence checks after explicit confirmation, and both keep prior commits in the repository.

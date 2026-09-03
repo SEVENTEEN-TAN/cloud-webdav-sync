@@ -8,6 +8,7 @@ import {
   type SettingDefinition,
   type SettingDefinitionItem,
 } from "obsidian";
+import { t } from "../i18n";
 import type { WebDavSyncSettings } from "./settings";
 
 export interface SettingsController {
@@ -30,13 +31,18 @@ export class WebDavSyncSettingTab extends PluginSettingTab {
     return [
       {
         type: "group",
-        heading: "WebDAV 同步",
+        heading: t("settings.group.connection"),
         items: this.getConnectionSettingDefinitions(),
       },
       {
         type: "group",
-        heading: "自动同步",
+        heading: t("settings.group.automation"),
         items: this.getAutomationSettingDefinitions(),
+      },
+      {
+        type: "group",
+        heading: t("settings.group.interface"),
+        items: this.getInterfaceSettingDefinitions(),
       },
     ];
   }
@@ -44,86 +50,91 @@ export class WebDavSyncSettingTab extends PluginSettingTab {
   private getConnectionSettingDefinitions(): SettingDefinition[] {
     return settingDefinitions([
       {
-        name: "服务器 URL",
-        desc: "WebDAV 服务端点的 HTTPS 地址。",
-        aliases: ["WebDAV", "服务器", "URL"],
+        name: t("settings.serverUrl.name"),
+        desc: t("settings.serverUrl.desc"),
+        aliases: ["WebDAV", "server", "URL", "服务器"],
         render: (setting) => setting.addText((text) => text
           .setPlaceholder("https://dav.example.com/remote.php/dav/files/user")
           .setValue(this.owner.settings.serverUrl)
           .onChange((value) => this.saveSetting({ serverUrl: value.trim() }))),
       },
       {
-        name: "远程文件夹",
-        desc: "专用于同步当前知识库的远程文件夹。",
-        aliases: ["路径", "目录"],
+        name: t("settings.remoteRoot.name"),
+        desc: t("settings.remoteRoot.desc"),
+        aliases: ["path", "folder", "路径", "目录"],
         render: (setting) => setting.addText((text) => text
           .setValue(this.owner.settings.remoteRoot)
           .onChange((value) => this.saveSetting({ remoteRoot: value.trim() }))),
       },
       {
-        name: "用户名",
-        aliases: ["账户", "账号"],
+        name: t("settings.username.name"),
+        aliases: ["user", "account", "账户", "账号"],
         render: (setting) => setting.addText((text) => text
           .setValue(this.owner.settings.username)
           .onChange((value) => this.saveSetting({ username: value }))),
       },
       {
-        name: "密码或应用专用密码",
+        name: t("settings.password.name"),
         desc: this.owner.getPassword()
-          ? "已在 Obsidian SecretStorage（安全凭据存储）中配置密码。仅在需要替换密码时输入新值。"
-          : "密码将保存在 Obsidian SecretStorage（安全凭据存储）中，而不会写入插件的 data.json。",
-        aliases: ["密码", "SecretStorage", "凭据"],
+          ? t("settings.password.desc.configured")
+          : t("settings.password.desc.missing"),
+        aliases: ["password", "SecretStorage", "credential", "密码", "凭据"],
         render: (setting) => this.renderPasswordSetting(setting),
       },
       {
-        name: "测试连接",
-        desc: "通过临时文件探测 ETag（实体标签）和条件写入能力。",
-        aliases: ["连接", "能力检测"],
-        render: (setting) => setting.addButton((button) => button.setButtonText("测试").onClick(async () => {
+        name: t("settings.testConnection.name"),
+        desc: t("settings.testConnection.desc"),
+        aliases: ["connection", "test", "probe", "连接", "能力检测"],
+        render: (setting) => setting.addButton((button) => button.setButtonText(t("settings.testConnection.button")).onClick(async () => {
           button.setDisabled(true);
-          button.setButtonText("正在测试…");
+          button.setButtonText(t("settings.testConnection.testing"));
           try {
             new Notice(await this.owner.testConnection(), 8_000);
           } catch (error) {
-            new Notice(`连接测试失败：${formatError(error)}`, 10_000);
+            new Notice(t("settings.testConnection.failed", { error: formatError(error) }), 10_000);
           } finally {
             button.setDisabled(false);
-            button.setButtonText("测试");
+            button.setButtonText(t("settings.testConnection.button"));
           }
         })),
       },
       {
-        name: "忘记仓库绑定",
-        desc: "清除本地仓库标识和基准提交标识，但不会删除知识库或 WebDAV 中的文件。",
-        aliases: ["重置", "仓库"],
+        name: t("settings.forgetBinding.name"),
+        desc: t("settings.forgetBinding.desc"),
+        aliases: ["reset", "repository", "binding", "重置", "仓库"],
         render: (setting) => setting.addButton((button) => button
-          .setButtonText("忘记绑定")
-          .setDestructive()
-          .onClick(async () => {
-            if (!(await confirmAction(this.app, "忘记仓库绑定", "确定要忘记此设备的 WebDAV 仓库绑定吗？", "忘记绑定"))) return;
-            await this.owner.resetSyncState();
-            new Notice("已清除本地 WebDAV 仓库绑定。");
-          })),
-      },
-      {
-        name: "清除远程同步锁",
-        desc: "仅用于紧急恢复。清除遗留的远程锁之前，请先关闭其他所有设备上的 Obsidian。",
-        aliases: ["锁", "恢复"],
-        render: (setting) => setting.addButton((button) => button
-          .setButtonText("清除锁")
+          .setButtonText(t("settings.forgetBinding.button"))
           .setDestructive()
           .onClick(async () => {
             if (!(await confirmAction(
               this.app,
-              "清除远程同步锁",
-              "确定要清除远程 WebDAV 同步锁吗？请仅在其他所有设备均已停止同步后继续。",
-              "清除锁",
+              t("settings.forgetBinding.confirm.title"),
+              t("settings.forgetBinding.confirm.body"),
+              t("settings.forgetBinding.button"),
+            ))) return;
+            await this.owner.resetSyncState();
+            new Notice(t("settings.forgetBinding.done"));
+          })),
+      },
+      {
+        name: t("settings.clearLock.name"),
+        desc: t("settings.clearLock.desc"),
+        aliases: ["lock", "recovery", "锁", "恢复"],
+        render: (setting) => setting.addButton((button) => button
+          .setButtonText(t("settings.clearLock.button"))
+          .setDestructive()
+          .onClick(async () => {
+            if (!(await confirmAction(
+              this.app,
+              t("settings.clearLock.confirm.title"),
+              t("settings.clearLock.confirm.body"),
+              t("settings.clearLock.button"),
             ))) return;
             try {
               await this.owner.clearRemoteLock();
-              new Notice("已清除远程 WebDAV 同步锁。");
+              new Notice(t("settings.clearLock.done"));
             } catch (error) {
-              new Notice(`无法清除远程同步锁：${formatError(error)}`, 10_000);
+              new Notice(t("settings.clearLock.failed", { error: formatError(error) }), 10_000);
             }
           })),
       },
@@ -133,24 +144,24 @@ export class WebDavSyncSettingTab extends PluginSettingTab {
   private getAutomationSettingDefinitions(): SettingDefinition[] {
     return settingDefinitions([
       {
-        name: "启用自动同步",
-        desc: "在 Obsidian 运行期间自动检查同步状态。",
-        aliases: ["自动同步"],
+        name: t("settings.autoSync.name"),
+        desc: t("settings.autoSync.desc"),
+        aliases: ["auto sync", "自动同步"],
         render: (setting) => setting.addToggle((toggle) => toggle
           .setValue(this.owner.settings.autoSync)
           .onChange((value) => this.saveSetting({ autoSync: value }))),
       },
       {
-        name: "启动时同步",
-        aliases: ["启动", "自动同步"],
+        name: t("settings.syncOnStartup.name"),
+        aliases: ["startup", "启动"],
         render: (setting) => setting.addToggle((toggle) => toggle
           .setValue(this.owner.settings.syncOnStartup)
           .onChange((value) => this.saveSetting({ syncOnStartup: value }))),
       },
       {
-        name: "文件变更延迟",
-        desc: "检测到最近一次本地文件变更后，等待多少秒再开始同步。",
-        aliases: ["延迟", "防抖"],
+        name: t("settings.fileChangeDelay.name"),
+        desc: t("settings.fileChangeDelay.desc"),
+        aliases: ["delay", "debounce", "延迟", "防抖"],
         render: (setting) => setting.addText((text) => text
           .setValue(String(this.owner.settings.fileChangeDelayMs / 1_000))
           .onChange((value) => {
@@ -161,9 +172,9 @@ export class WebDavSyncSettingTab extends PluginSettingTab {
           })),
       },
       {
-        name: "远程轮询间隔",
-        desc: "Obsidian 运行期间，两次轻量级远程检查之间的间隔分钟数。",
-        aliases: ["轮询", "间隔"],
+        name: t("settings.remotePollMinutes.name"),
+        desc: t("settings.remotePollMinutes.desc"),
+        aliases: ["polling", "interval", "轮询", "间隔"],
         render: (setting) => setting.addText((text) => text
           .setValue(String(this.owner.settings.remotePollMinutes))
           .onChange((value) => {
@@ -174,9 +185,9 @@ export class WebDavSyncSettingTab extends PluginSettingTab {
           })),
       },
       {
-        name: "远程 HEAD 最大重试次数",
-        desc: "首次尝试后，远程 HEAD 或同步锁发生竞争时最多重新规划并重试多少次（0～20）。",
-        aliases: ["HEAD", "重试"],
+        name: t("settings.headRetries.name"),
+        desc: t("settings.headRetries.desc"),
+        aliases: ["HEAD", "retry", "重试"],
         render: (setting) => setting.addText((text) => text
           .setValue(String(this.owner.settings.headUpdateMaxRetries))
           .onChange((value) => {
@@ -187,9 +198,9 @@ export class WebDavSyncSettingTab extends PluginSettingTab {
           })),
       },
       {
-        name: "远程 HEAD 重试间隔",
-        desc: "两次远程 HEAD 重试之间等待多少秒。设为 0 可立即重试。",
-        aliases: ["HEAD", "重试", "间隔"],
+        name: t("settings.headRetryDelay.name"),
+        desc: t("settings.headRetryDelay.desc"),
+        aliases: ["HEAD", "retry", "delay", "重试", "间隔"],
         render: (setting) => setting.addText((text) => text
           .setValue(String(this.owner.settings.headUpdateRetryDelayMs / 1_000))
           .onChange((value) => {
@@ -200,17 +211,17 @@ export class WebDavSyncSettingTab extends PluginSettingTab {
           })),
       },
       {
-        name: "启用实际同步",
-        desc: "实验性功能：允许上传和下载仓库内容、将删除的文件安全移至 .trash，以及自动合并无冲突的 Markdown。",
-        aliases: ["实际同步", "上传", "下载"],
+        name: t("settings.enableRealSync.name"),
+        desc: t("settings.enableRealSync.desc"),
+        aliases: ["real sync", "upload", "download", "实际同步", "上传", "下载"],
         render: (setting) => setting.addToggle((toggle) => toggle
           .setValue(this.owner.settings.enableRealSync)
           .onChange((value) => this.saveSetting({ enableRealSync: value }))),
       },
       {
-        name: "传输并发数",
-        desc: "同时进行哈希计算、上传或下载的最大文件数（1～16）。",
-        aliases: ["并发", "传输"],
+        name: t("settings.transferConcurrency.name"),
+        desc: t("settings.transferConcurrency.desc"),
+        aliases: ["concurrency", "transfer", "并发", "传输"],
         render: (setting) => setting.addText((text) => text
           .setValue(String(this.owner.settings.transferConcurrency))
           .onChange((value) => {
@@ -221,12 +232,12 @@ export class WebDavSyncSettingTab extends PluginSettingTab {
           })),
       },
       {
-        name: "排除目录",
-        desc: "每行一个目录。目录中的文件不会加入待同步列表，也不会上传或下载。",
-        aliases: ["排除", "忽略", "目录"],
+        name: t("settings.excludedFolders.name"),
+        desc: t("settings.excludedFolders.desc"),
+        aliases: ["exclude", "ignore", "folder", "排除", "忽略", "目录"],
         render: (setting) => setting.addTextArea((text) => {
           text.inputEl.rows = 5;
-          text.setPlaceholder("例如：\n附件缓存\n临时文件/导出");
+          text.setPlaceholder(t("settings.excludedFolders.placeholder"));
           text.setValue(this.owner.settings.excludedFolders.join("\n"));
           text.onChange((value) => this.saveSetting({
             excludedFolders: value.split("\n").map((line) => line.trim()),
@@ -234,13 +245,13 @@ export class WebDavSyncSettingTab extends PluginSettingTab {
         }),
       },
       {
-        name: "首次同步时两端均有文件",
-        desc: "安全的默认策略是停止同步。优先本地会基于远程历史创建新提交；优先远程会在完成删除检查后替换本地文件。",
-        aliases: ["首次同步", "优先本地", "优先远程"],
+        name: t("settings.initialSyncPolicy.name"),
+        desc: t("settings.initialSyncPolicy.desc"),
+        aliases: ["first sync", "prefer local", "prefer remote", "首次同步", "优先本地", "优先远程"],
         render: (setting) => setting.addDropdown((dropdown) => dropdown
-          .addOption("stop", "停止同步并显示冲突")
-          .addOption("prefer-remote", "使用远程文件树")
-          .addOption("prefer-local", "提交本地文件树")
+          .addOption("stop", t("settings.initialSyncPolicy.stop"))
+          .addOption("prefer-remote", t("settings.initialSyncPolicy.preferRemote"))
+          .addOption("prefer-local", t("settings.initialSyncPolicy.preferLocal"))
           .setValue(this.owner.settings.initialSyncPolicy)
           .onChange((value) => this.saveSetting({
             initialSyncPolicy: value as WebDavSyncSettings["initialSyncPolicy"],
@@ -249,31 +260,57 @@ export class WebDavSyncSettingTab extends PluginSettingTab {
     ]);
   }
 
+  private getInterfaceSettingDefinitions(): SettingDefinition[] {
+    return settingDefinitions([
+      {
+        name: t("settings.language.name"),
+        desc: t("settings.language.desc"),
+        aliases: ["language", "interface", "Chinese", "English", "语言", "界面", "中文"],
+        render: (setting) => setting.addDropdown((dropdown) => dropdown
+          .addOption("auto", t("settings.language.option.auto"))
+          .addOption("zh-CN", t("settings.language.option.zh"))
+          .addOption("en", t("settings.language.option.en"))
+          .setValue(this.owner.settings.language)
+          .onChange((value) => {
+            this.saveSetting({ language: value as WebDavSyncSettings["language"] });
+            this.update();
+          })),
+      },
+    ]);
+  }
+
   private renderPasswordSetting(setting: Setting): Setting {
     const passwordConfigured = Boolean(this.owner.getPassword());
     setting.addText((text) => {
       text.inputEl.type = "password";
-      text.setPlaceholder(passwordConfigured ? "已配置密码" : "请输入密码");
+      text.setPlaceholder(passwordConfigured
+        ? t("settings.password.placeholder.configured")
+        : t("settings.password.placeholder.missing"));
       text.setValue("");
       text.onChange((value) => {
         if (!value) return;
         void this.owner.savePassword(value).catch((error: unknown) => {
-          new Notice(`无法保存密码：${formatError(error)}`);
+          new Notice(t("settings.password.saveFailed", { error: formatError(error) }));
         });
       });
     });
     setting.addButton((button) => button
-      .setButtonText("清除")
+      .setButtonText(t("settings.password.clearButton"))
       .setDestructive()
       .setDisabled(!passwordConfigured)
       .onClick(async () => {
-        if (!(await confirmAction(this.app, "清除已保存的 WebDAV 密码", "确定要清除已保存的 WebDAV 密码吗？", "清除"))) return;
+        if (!(await confirmAction(
+          this.app,
+          t("settings.password.clearConfirm.title"),
+          t("settings.password.clearConfirm.body"),
+          t("settings.password.clearButton"),
+        ))) return;
         try {
           await this.owner.clearPassword();
           this.update();
-          new Notice("已清除保存的 WebDAV 密码。");
+          new Notice(t("settings.password.cleared"));
         } catch (error) {
-          new Notice(`无法清除密码：${formatError(error)}`);
+          new Notice(t("settings.password.clearFailed", { error: formatError(error) }));
         }
       }));
     return setting;
@@ -281,7 +318,7 @@ export class WebDavSyncSettingTab extends PluginSettingTab {
 
   private saveSetting(patch: Partial<WebDavSyncSettings>): void {
     void this.owner.updateSettings(patch).catch((error: unknown) => {
-      new Notice(`无法保存设置：${formatError(error)}`);
+      new Notice(t("settings.saveFailed", { error: formatError(error) }));
     });
   }
 }
@@ -309,7 +346,7 @@ function confirmAction(app: App, title: string, message: string, confirmText: st
     const modal = new ConfirmationModal(app)
       .setTitle(title)
       .setContent(message)
-      .addCancelButton("取消")
+      .addCancelButton(t("common.cancel"))
       .addButton((button) => button
         .setButtonText(confirmText)
         .setDestructive()

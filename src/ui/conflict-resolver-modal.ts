@@ -1,5 +1,6 @@
 import { App, Modal, Notice } from "obsidian";
 import type { ConflictChoice } from "../sync";
+import { t } from "../i18n";
 import {
   chooseAllConflictPaths,
   chooseInitialConflictPath,
@@ -26,7 +27,7 @@ export class ConflictResolverModal extends Modal {
   }
 
   onOpen(): void {
-    this.setTitle("处理同步冲突");
+    this.setTitle(t("conflict.title"));
     this.modalEl.addClass("webdav-conflict-resolver-modal");
     this.render();
   }
@@ -45,13 +46,17 @@ export class ConflictResolverModal extends Modal {
     }
 
     const header = this.contentEl.createDiv({ cls: "webdav-conflict-resolver-header" });
-    header.createEl("strong", { text: "解决同步冲突" });
+    header.createEl("strong", { text: t("conflict.header") });
     header.createSpan({
       text: progress.total > 0
-        ? `已处理 ${progress.resolved} / ${progress.total}`
-        : "当前冲突需要手动检查",
+        ? t("conflict.progress", { resolved: progress.resolved, total: progress.total })
+        : t("conflict.progress.manual"),
     });
-    header.createSpan({ text: progress.canContinue ? "全部冲突已选择处理方式" : `还有 ${progress.unresolved} 个冲突未处理` });
+    header.createSpan({
+      text: progress.canContinue
+        ? t("conflict.progress.canContinue")
+        : t("conflict.progress.unresolved", { count: progress.unresolved }),
+    });
 
     const layout = this.contentEl.createDiv({ cls: "webdav-conflict-resolver-layout" });
     const visible = filterConflicts(snapshot.conflicts, this.filter);
@@ -71,11 +76,16 @@ export class ConflictResolverModal extends Modal {
   ): void {
     const sidebar = layout.createDiv({ cls: "webdav-conflict-resolver-sidebar" });
     const sidebarHeader = sidebar.createDiv({ cls: "webdav-conflict-sidebar-header" });
-    sidebarHeader.createEl("strong", { text: "冲突文件" });
+    sidebarHeader.createEl("strong", { text: t("conflict.sidebar.title") });
     sidebarHeader.createSpan({ text: total > 0 ? `${resolved} / ${total}` : String(allConflicts.length) });
 
     const filters = sidebar.createDiv({ cls: "webdav-conflict-filters" });
-    for (const [filter, label] of [["all", "全部"], ["unresolved", "未处理"], ["resolved", "已处理"]] as const) {
+    const filterLabels: readonly [ConflictFilter, string][] = [
+      ["all", t("conflict.filter.all")],
+      ["unresolved", t("conflict.filter.unresolved")],
+      ["resolved", t("conflict.filter.resolved")],
+    ];
+    for (const [filter, label] of filterLabels) {
       const button = filters.createEl("button", {
         text: label,
         cls: filter === this.filter ? "is-active" : undefined,
@@ -92,7 +102,7 @@ export class ConflictResolverModal extends Modal {
 
     const list = sidebar.createDiv({ cls: "webdav-conflict-file-list" });
     if (visible.length === 0) {
-      list.createEl("p", { text: "当前筛选条件下没有文件。", cls: "webdav-sync-empty" });
+      list.createEl("p", { text: t("conflict.sidebar.empty"), cls: "webdav-sync-empty" });
       return;
     }
     for (const conflict of visible) {
@@ -117,7 +127,7 @@ export class ConflictResolverModal extends Modal {
     conflicts: readonly SyncCenterConflict[],
   ): void {
     if (!conflict) {
-      container.createEl("p", { text: "没有可展示的冲突。", cls: "webdav-sync-empty" });
+      container.createEl("p", { text: t("conflict.detail.empty"), cls: "webdav-sync-empty" });
       return;
     }
     const heading = container.createDiv({ cls: "webdav-conflict-detail-heading" });
@@ -126,22 +136,26 @@ export class ConflictResolverModal extends Modal {
 
     if (!conflict.canResolve) {
       const callout = container.createDiv({ cls: "webdav-sync-callout is-warning" });
-      callout.createEl("strong", { text: "该冲突不能通过选择文件版本自动处理" });
+      callout.createEl("strong", { text: t("conflict.detail.cannotResolveTitle") });
       callout.createSpan({
-        text: "请打开同步中心的“概览”页，使用强制推送（本地覆盖云端）或强制拉取（云端覆盖本地）恢复操作；或检查仓库配置后重新运行同步。",
+        text: t("conflict.detail.cannotResolveBody"),
       });
       return;
     }
 
     const explanation = container.createDiv({ cls: "webdav-conflict-explanation" });
-    explanation.createSpan({ text: conflict.choice ? `当前选择：${formatChoice(conflict.choice)}` : "请选择要保留的文件版本。" });
+    explanation.createSpan({
+      text: conflict.choice
+        ? t("conflict.detail.currentChoice", { choice: formatChoice(conflict.choice) })
+        : t("conflict.detail.choosePrompt"),
+    });
     if (conflict.versions) {
-      explanation.createSpan({ text: "以下内容只保留在当前运行内存中，不会写入插件设置或诊断报告。" });
+      explanation.createSpan({ text: t("conflict.detail.memoryOnly") });
       this.renderTextVersions(container, conflict.versions);
     } else {
       const empty = container.createDiv({ cls: "webdav-sync-callout" });
-      empty.createEl("strong", { text: "此冲突没有可合并的 Markdown 正文" });
-      empty.createSpan({ text: "选择本地或远程版本后，插件会在下一次同步中按选择处理该路径。" });
+      empty.createEl("strong", { text: t("conflict.detail.noMarkdownTitle") });
+      empty.createSpan({ text: t("conflict.detail.noMarkdownBody") });
     }
 
     const actions = container.createDiv({ cls: "webdav-conflict-choice-actions" });
@@ -166,11 +180,15 @@ export class ConflictResolverModal extends Modal {
     const diff = buildThreeWayDiff(versions.base, versions.local, versions.remote);
     if (diff.simplified) {
       const warning = container.createDiv({ cls: "webdav-sync-callout is-warning" });
-      warning.createSpan({ text: "文件较大，已使用简化文本视图；不会计算完整行级高亮。" });
+      warning.createSpan({ text: t("conflict.detail.simplified") });
     }
     const columns = container.createDiv({ cls: "webdav-conflict-version-columns" });
     const documents: HTMLElement[] = [];
-    for (const [label, lines] of [["本地版本", diff.local], ["远程版本", diff.remote]] as const) {
+    const columnLabels: readonly [string, readonly DiffLine[]][] = [
+      [t("conflict.column.local"), diff.local],
+      [t("conflict.column.remote"), diff.remote],
+    ];
+    for (const [label, lines] of columnLabels) {
       const column = columns.createDiv({ cls: "webdav-conflict-version-column" });
       column.createEl("h4", { text: label });
       documents.push(this.renderLineNumberedText(column, lines));
@@ -204,12 +222,12 @@ export class ConflictResolverModal extends Modal {
 
   private renderFooter(snapshot: SyncCenterSnapshot, canContinue: boolean): void {
     const footer = this.contentEl.createDiv({ cls: "webdav-conflict-resolver-footer" });
-    const previous = footer.createEl("button", { text: "上一个" });
+    const previous = footer.createEl("button", { text: t("conflict.footer.previous") });
     previous.addEventListener("click", () => {
       this.selectedPath = moveConflictSelection(snapshot.conflicts, this.selectedPath, -1);
       this.render();
     });
-    const next = footer.createEl("button", { text: "下一个" });
+    const next = footer.createEl("button", { text: t("conflict.footer.next") });
     next.addEventListener("click", () => {
       this.selectedPath = moveConflictSelection(snapshot.conflicts, this.selectedPath, 1);
       this.render();
@@ -217,7 +235,7 @@ export class ConflictResolverModal extends Modal {
     const progress = getConflictResolutionProgress(snapshot.conflicts);
     for (const choice of ["local", "remote"] as const) {
       const bulk = footer.createEl("button", {
-        text: choice === "local" ? "全部使用本地" : "全部使用远程",
+        text: choice === "local" ? t("conflict.footer.allLocal") : t("conflict.footer.allRemote"),
         cls: "webdav-conflict-bulk-choice",
       });
       bulk.disabled = progress.unresolved === 0;
@@ -229,9 +247,11 @@ export class ConflictResolverModal extends Modal {
       });
     }
     const spacer = footer.createDiv({ cls: "webdav-conflict-footer-spacer" });
-    spacer.createSpan({ text: canContinue ? "所有冲突已处理，可以继续同步。" : "全部冲突处理完成后才能继续同步。" });
+    spacer.createSpan({
+      text: canContinue ? t("conflict.footer.canContinue") : t("conflict.footer.cannotContinue"),
+    });
     const complete = footer.createEl("button", {
-      text: "完成并继续同步",
+      text: t("conflict.footer.complete"),
       cls: "mod-cta",
     });
     complete.disabled = !canContinue;
@@ -242,14 +262,14 @@ export class ConflictResolverModal extends Modal {
         .then(() => {
           const updated = this.controller.getSnapshot();
           if (updated.state !== "conflict") {
-            new Notice("冲突选择已应用，同步已完成。", 6_000);
+            new Notice(t("conflict.notice.applied"), 6_000);
             this.close();
             return;
           }
           this.render();
         })
         .catch((error: unknown) => {
-          new Notice(`同步尚未完成：${formatError(error)}`, 10_000);
+          new Notice(t("conflict.notice.incomplete", { error: formatError(error) }), 10_000);
           this.render();
         });
     });
@@ -265,14 +285,14 @@ function nextUnresolvedPath(conflicts: readonly SyncCenterConflict[], currentPat
 }
 
 function conflictStatus(conflict: SyncCenterConflict): string {
-  if (!conflict.canResolve) return "需检查";
-  if (conflict.choice === "local") return "已选本地";
-  if (conflict.choice === "remote") return "已选远程";
-  return "未处理";
+  if (!conflict.canResolve) return t("conflict.status.needsReview");
+  if (conflict.choice === "local") return t("conflict.status.local");
+  if (conflict.choice === "remote") return t("conflict.status.remote");
+  return t("conflict.status.unresolved");
 }
 
 function formatChoice(choice: ConflictChoice): string {
-  return choice === "local" ? "使用本地版本" : "使用远程版本";
+  return choice === "local" ? t("conflict.choice.local") : t("conflict.choice.remote");
 }
 
 function formatError(error: unknown): string {

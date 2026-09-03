@@ -1,5 +1,6 @@
-import { Notice, Platform, Plugin, TFile } from "obsidian";
+import { moment, Notice, Platform, Plugin, TFile } from "obsidian";
 import { SyncStateMachine, type SyncState } from "./core";
+import { resolveLanguage, setLanguage, t, type MessageKey } from "./i18n";
 import {
   BoundedMemoryLog,
   appendSyncHistory,
@@ -81,6 +82,7 @@ export default class WebDavSyncPlugin extends Plugin implements SettingsControll
   async onload(): Promise<void> {
     const storedData: unknown = await this.loadData();
     this.settings = normalizeSettings(storedData);
+    this.applyLanguage();
     this.syncSession = loadSyncSession(storedData);
     this.syncHistory = loadSyncHistory(storedData);
     this.lastRemotePollAt = Date.now();
@@ -88,10 +90,10 @@ export default class WebDavSyncPlugin extends Plugin implements SettingsControll
     this.refreshConfiguredState();
 
     this.register(this.state.subscribe(() => this.updateStatusSurfaces()));
-    this.ribbonEl = this.addRibbonIcon("refresh-cw", "立即运行 WebDAV 同步", () => {
+    this.ribbonEl = this.addRibbonIcon("refresh-cw", t("plugin.ribbonTooltip"), () => {
       void this.runManualSync()
-        .then(() => new Notice("WebDAV 同步完成。"))
-        .catch((error: unknown) => new Notice(`WebDAV 同步失败：${formatError(error)}`, 10_000));
+        .then(() => new Notice(t("plugin.notice.syncDone")))
+        .catch((error: unknown) => new Notice(t("plugin.notice.syncFailed", { error: formatError(error) }), 10_000));
     });
 
     if (Platform.isDesktop) {
@@ -101,24 +103,24 @@ export default class WebDavSyncPlugin extends Plugin implements SettingsControll
 
     this.addCommand({
       id: "sync-now",
-      name: "立即运行同步",
+      name: t("plugin.command.syncNow"),
       callback: () => void this.runManualSync().catch((error: unknown) => {
-        new Notice(`WebDAV 同步失败：${formatError(error)}`, 10_000);
+        new Notice(t("plugin.notice.syncFailed", { error: formatError(error) }), 10_000);
       }),
     });
     this.addCommand({
       id: "open-sync-center",
-      name: "打开同步中心",
+      name: t("plugin.command.openSyncCenter"),
       callback: () => this.openSyncCenter(),
     });
     this.addCommand({
       id: "resolve-conflicts",
-      name: "处理同步冲突",
+      name: t("plugin.command.resolveConflicts"),
       callback: () => this.openConflictResolver(),
     });
     this.addCommand({
       id: "rescan-vault",
-      name: "重新扫描知识库并打开同步中心",
+      name: t("plugin.command.rescan"),
       callback: () => {
         this.rescanVault();
         this.openSyncCenter();
@@ -138,7 +140,7 @@ export default class WebDavSyncPlugin extends Plugin implements SettingsControll
         this.isConfigured()
       ) {
         void this.scheduler.request("resume").catch((error: unknown) => {
-          this.log.warn("恢复到前台后的同步检查失败。", error);
+          this.log.warn(t("plugin.log.resumeFailed"), error);
         });
       }
     });
@@ -148,13 +150,13 @@ export default class WebDavSyncPlugin extends Plugin implements SettingsControll
       this.registerVaultEvents();
       if (this.settings.autoSync && this.settings.syncOnStartup && this.isConfigured()) {
         void this.scheduler.request("startup").catch((error: unknown) => {
-          this.log.warn("启动时同步检查失败。", error);
+          this.log.warn(t("plugin.log.startupFailed"), error);
         });
       }
     });
 
     this.updateStatusSurfaces();
-    this.log.info("WebDAV 同步插件已加载，当前默认为仅规划安全模式。");
+    this.log.info(t("plugin.log.loaded"));
   }
 
   getPassword(): string | null {
@@ -179,11 +181,16 @@ export default class WebDavSyncPlugin extends Plugin implements SettingsControll
       patch.username !== undefined;
     this.settings = normalizeSettings({ ...this.settings, ...patch });
     this.configRevision += 1;
+    if (patch.language !== undefined) this.applyLanguage();
     if (connectionChanged) this.invalidateCapabilities();
     if (!this.settings.autoSync) this.cancelFileChangeSync();
     if (patch.remotePollMinutes !== undefined) this.lastRemotePollAt = Date.now();
     await this.persistData();
     this.refreshConfiguredState();
+  }
+
+  private applyLanguage(): void {
+    setLanguage(resolveLanguage(this.settings.language, moment.locale()));
   }
 
   async resetSyncState(): Promise<void> {
@@ -201,25 +208,25 @@ export default class WebDavSyncPlugin extends Plugin implements SettingsControll
 
   async clearRemoteLock(): Promise<void> {
     if (!["idle", "error", "conflict", "offline"].includes(this.state.current)) {
-      throw new Error("请等待当前同步任务停止后再清除远程锁。");
+      throw new Error(t("plugin.error.clearLockBusy"));
     }
     const settings = { ...this.settings };
     const password = this.getPassword();
     const client = this.createWebDavClient(settings, password);
     const response = await client.remove(HEAD_LOCK_PATH);
     if (![200, 204, 404].includes(response.status)) {
-      throw new Error(`清除远程同步锁时，WebDAV 返回了 HTTP ${response.status}。`);
+      throw new Error(t("plugin.error.clearLockStatus", { status: response.status }));
     }
   }
 
   async clearHistoryAndLogs(): Promise<void> {
     if (!["idle", "error", "conflict", "offline"].includes(this.state.current)) {
-      throw new Error("请等待当前同步任务停止后再清除历史和日志。");
+      throw new Error(t("plugin.error.clearHistoryBusy"));
     }
     this.syncHistory = [];
     this.log.clear();
     await this.persistData();
-    this.log.info("已清除同步历史与运行日志。");
+    this.log.info(t("plugin.log.historyCleared"));
   }
 
   async testConnection(): Promise<string> {
@@ -233,12 +240,14 @@ export default class WebDavSyncPlugin extends Plugin implements SettingsControll
     this.updateStatusSurfaces();
     if (!result.ok) {
       this.capabilityConfigKey = null;
-      throw new Error(result.error?.message ?? "WebDAV 能力检测发生未知错误。");
+      throw new Error(result.error?.message ?? t("plugin.testConnection.unknownError"));
     }
     this.capabilityConfigKey = connectionConfigKey(settings);
     return result.capabilities.safeConcurrentWrites
-      ? `连接成功。HEAD 更新策略：${describeHeadUpdateStrategy(result.capabilities.headUpdateStrategy)}。`
-      : "连接成功，但尚未证明并发写入安全。请查看同步中心中的警告。";
+      ? t("plugin.testConnection.success", {
+          strategy: describeHeadUpdateStrategy(result.capabilities.headUpdateStrategy),
+        })
+      : t("plugin.testConnection.unsafe");
   }
 
   getSnapshot(): SyncCenterSnapshot {
@@ -283,7 +292,7 @@ export default class WebDavSyncPlugin extends Plugin implements SettingsControll
 
   openConflictResolver(): void {
     if (this.lastConflicts.length === 0) {
-      new Notice("当前没有需要处理的同步冲突。");
+      new Notice(t("plugin.notice.noConflicts"));
       return;
     }
     new ConflictResolverModal(this.app, this).open();
@@ -361,7 +370,7 @@ export default class WebDavSyncPlugin extends Plugin implements SettingsControll
       this.fileChangeTimer = null;
       this.fileChangeBurstStartedAt = null;
       void this.scheduler.request("file-change").catch((error: unknown) => {
-        this.log.warn("文件变更触发的同步检查失败。", error);
+        this.log.warn(t("plugin.log.fileChangeFailed"), error);
       });
     }, delayMs);
     this.updateStatusSurfaces();
@@ -385,15 +394,15 @@ export default class WebDavSyncPlugin extends Plugin implements SettingsControll
     if (Date.now() - this.lastRemotePollAt < intervalMs) return;
     this.lastRemotePollAt = Date.now();
     void this.scheduler.request("interval").catch((error: unknown) => {
-      this.log.warn("定时同步检查失败。", error);
+      this.log.warn(t("plugin.log.intervalFailed"), error);
     });
   }
 
   private async runOneSync(triggers: readonly SyncTrigger[]): Promise<void> {
     if (!this.isConfigured()) {
       this.refreshConfiguredState();
-      this.log.warn("由于尚未配置 WebDAV，本次同步已跳过。");
-      throw new Error("请先配置 WebDAV 服务器、远程目录、用户名和密码。");
+      this.log.warn(t("plugin.log.skippedUnconfigured"));
+      throw new Error(t("plugin.error.configureFirst"));
     }
 
     const startedAt = Date.now();
@@ -406,50 +415,50 @@ export default class WebDavSyncPlugin extends Plugin implements SettingsControll
     try {
       this.moveToIdleIfRecoverable();
       this.state.transitionTo("scanning");
-      this.setSyncProgress({ phase: "scanning", completed: 0, total: 1, message: "读取待同步队列" });
+      this.setSyncProgress({ phase: "scanning", completed: 0, total: 1, message: t("plugin.progress.queue") });
       const pending = this.changes.snapshot();
       pendingCount = pending.length;
-      this.setSyncProgress({ phase: "scanning", completed: 1, total: 1, message: "读取待同步队列" });
-      this.log.info("同步检查已开始。", { triggers, pendingChanges: pending.length });
+      this.setSyncProgress({ phase: "scanning", completed: 1, total: 1, message: t("plugin.progress.queue") });
+      this.log.info(t("plugin.log.syncStarted"), { triggers, pendingChanges: pending.length });
 
       this.state.transitionTo("checking-remote");
-      this.setSyncProgress({ phase: "initializing", completed: 0, total: 3, message: "准备远程连接" });
+      this.setSyncProgress({ phase: "initializing", completed: 0, total: 3, message: t("plugin.progress.connecting") });
       this.lastRemotePollAt = Date.now();
       const client = this.createWebDavClient(runSettings, runPassword);
-      this.setSyncProgress({ phase: "initializing", completed: 1, total: 3, message: "准备远程连接" });
+      this.setSyncProgress({ phase: "initializing", completed: 1, total: 3, message: t("plugin.progress.connecting") });
       const capabilityKey = connectionConfigKey(runSettings);
       const cachedCapabilities = this.capabilityConfigKey === capabilityKey
         ? this.capabilities
         : null;
       if (cachedCapabilities) {
-        this.setSyncProgress({ phase: "initializing", completed: 2, total: 3, message: "确认远程目录" });
+        this.setSyncProgress({ phase: "initializing", completed: 2, total: 3, message: t("plugin.progress.confirmRoot") });
         await client.ensureRemoteRoot();
       } else {
-        this.setSyncProgress({ phase: "initializing", completed: 2, total: 3, message: "检测远程能力" });
+        this.setSyncProgress({ phase: "initializing", completed: 2, total: 3, message: t("plugin.progress.probing") });
       }
       const result: CapabilityProbeResult =
         cachedCapabilities
           ? { ok: true, capabilities: cachedCapabilities }
           : await client.probeCapabilities();
-      this.setSyncProgress({ phase: "initializing", completed: 3, total: 3, message: "检测远程能力" });
+      this.setSyncProgress({ phase: "initializing", completed: 3, total: 3, message: t("plugin.progress.probing") });
       this.assertRunConfiguration(revision);
       this.capabilities = result.capabilities;
       if (!result.ok) {
         this.capabilityConfigKey = null;
-        throw new Error(result.error?.message ?? "WebDAV 能力检测失败。");
+        throw new Error(result.error?.message ?? t("plugin.error.probeFailed"));
       }
       this.capabilityConfigKey = capabilityKey;
 
       this.state.transitionTo("planning");
-      this.setSyncProgress({ phase: "planning", completed: 0, total: 1, message: "规划同步" });
+      this.setSyncProgress({ phase: "planning", completed: 0, total: 1, message: t("plugin.progress.planning") });
       if (!runSettings.enableRealSync) {
-        this.setSyncProgress({ phase: "planning", completed: 1, total: 1, message: "规划同步" });
-        this.log.info("仅规划模式的同步检查已完成。", {
+        this.setSyncProgress({ phase: "planning", completed: 1, total: 1, message: t("plugin.progress.planning") });
+        this.log.info(t("plugin.log.planningDone"), {
           pendingChanges: pending.length,
           safeConcurrentWrites: result.capabilities.safeConcurrentWrites,
           warnings: result.capabilities.warnings,
         });
-        this.addHistory(triggers, "planned", startedAt, pendingCount, "仅规划模式检查完成。");
+        this.addHistory(triggers, "planned", startedAt, pendingCount, t("plugin.history.planned"));
         historyRecorded = true;
         await this.persistData();
         this.clearSyncProgress();
@@ -459,9 +468,7 @@ export default class WebDavSyncPlugin extends Plugin implements SettingsControll
 
       const headUpdateStrategy = result.capabilities.headUpdateStrategy;
       if (!result.capabilities.safeConcurrentWrites || !headUpdateStrategy) {
-        throw new Error(
-          "真实同步需要安全的条件创建能力，以及经过验证的 HEAD 更新策略。",
-        );
+        throw new Error(t("plugin.error.realSyncRequirements"));
       }
 
       const syncResult = await this.runRepositorySync(
@@ -473,13 +480,11 @@ export default class WebDavSyncPlugin extends Plugin implements SettingsControll
       );
       this.assertRunConfiguration(revision);
       if (syncResult.status === "retry") {
-        throw new Error(
-          "远程 HEAD 或同步锁连续发生变化。请确认其他设备已停止同步；如确认没有其他设备正在同步，可在同步中心清除远程同步锁后重试。",
-        );
+        throw new Error(t("plugin.error.headChurn"));
       }
       if (syncResult.status === "conflict") {
         this.captureConflicts(syncResult);
-        this.log.warn("同步需要处理冲突。", {
+        this.log.warn(t("plugin.log.conflictNeedsAttention"), {
           reason: syncResult.reason,
           plan: syncResult.plan?.map(({ path, action }) => ({ path, action })),
           markdownConflictPaths: Object.keys(syncResult.markdownConflicts ?? {}),
@@ -489,12 +494,12 @@ export default class WebDavSyncPlugin extends Plugin implements SettingsControll
           "conflict",
           startedAt,
           pendingCount,
-          `同步冲突：${describeConflictReason(syncResult.reason)}。`,
+          t("plugin.history.conflict", { reason: describeConflictReason(syncResult.reason) }),
         );
         historyRecorded = true;
         await this.persistData();
         this.state.transitionTo("conflict");
-        throw new Error(`同步冲突：${describeConflictReason(syncResult.reason)}。`);
+        throw new Error(t("plugin.error.conflict", { reason: describeConflictReason(syncResult.reason) }));
       }
 
       this.syncSession = syncResult.state;
@@ -505,13 +510,13 @@ export default class WebDavSyncPlugin extends Plugin implements SettingsControll
         syncResult.status,
         startedAt,
         pendingCount,
-        `仓库同步完成：${describeSyncResultStatus(syncResult.status)}。`,
+        t("plugin.history.completed", { status: describeSyncResultStatus(syncResult.status) }),
         "commitId" in syncResult ? syncResult.commitId : undefined,
       );
       historyRecorded = true;
       await this.persistData();
       this.changes.acknowledge(pending);
-      this.log.info("仓库同步已完成。", {
+      this.log.info(t("plugin.log.syncCompleted"), {
         result: syncResult.status,
         baseCommitId: syncResult.state.baseCommitId,
       });
@@ -522,7 +527,7 @@ export default class WebDavSyncPlugin extends Plugin implements SettingsControll
       if (this.state.current !== "conflict" && this.state.canTransitionTo("error")) {
         this.state.transitionTo("error");
       }
-      this.log.error("同步检查失败。", error);
+      this.log.error(t("plugin.log.syncFailed"), error);
       if (!historyRecorded) {
         this.addHistory(
           triggers,
@@ -534,7 +539,7 @@ export default class WebDavSyncPlugin extends Plugin implements SettingsControll
         try {
           await this.persistData();
         } catch (persistError) {
-          this.log.error("无法保存同步历史。", persistError);
+          this.log.error(t("plugin.log.historyPersistFailed"), persistError);
         }
       }
       throw error;
@@ -597,7 +602,7 @@ export default class WebDavSyncPlugin extends Plugin implements SettingsControll
       if (result.status !== "retry") return result;
       const retry = decideHeadReplanRetry(attempt, settings.headUpdateMaxRetries);
       if (!retry.shouldRetry) return result;
-      this.log.warn("提交期间远程 HEAD 或同步锁已变化，正在重新规划。", {
+      this.log.warn(t("plugin.log.replan"), {
         retry: retry.retryNumber,
         maxRetries: retry.maxRetries,
         retryDelayMs: settings.headUpdateRetryDelayMs,
@@ -619,7 +624,7 @@ export default class WebDavSyncPlugin extends Plugin implements SettingsControll
 
   async fetchCommitHistory(): Promise<CommitHistoryEntry[]> {
     if (!this.isConfigured()) {
-      throw new Error("请先配置 WebDAV 服务器、远程目录、用户名和密码。");
+      throw new Error(t("plugin.error.configureFirst"));
     }
     const settings = { ...this.settings };
     const client = this.createWebDavClient(settings, this.getPassword());
@@ -629,10 +634,10 @@ export default class WebDavSyncPlugin extends Plugin implements SettingsControll
 
   private async runForcedSync(direction: ForceSyncDirection): Promise<void> {
     if (!this.settings.enableRealSync) {
-      throw new Error("强制恢复需要先在设置中启用实际同步。");
+      throw new Error(t("plugin.error.forceRequiresRealSync"));
     }
     if (!this.isConfigured()) {
-      throw new Error("请先配置 WebDAV 服务器、远程目录、用户名和密码。");
+      throw new Error(t("plugin.error.configureFirst"));
     }
     const startedAt = Date.now();
     const revision = this.configRevision;
@@ -641,32 +646,32 @@ export default class WebDavSyncPlugin extends Plugin implements SettingsControll
     try {
       this.moveToIdleIfRecoverable();
       this.state.transitionTo("scanning");
-      this.setSyncProgress({ phase: "initializing", completed: 0, total: 3, message: "准备远程连接" });
+      this.setSyncProgress({ phase: "initializing", completed: 0, total: 3, message: t("plugin.progress.connecting") });
       const client = this.createWebDavClient(runSettings, runPassword);
       const capabilityKey = connectionConfigKey(runSettings);
       const cachedCapabilities = this.capabilityConfigKey === capabilityKey
         ? this.capabilities
         : null;
       if (cachedCapabilities) {
-        this.setSyncProgress({ phase: "initializing", completed: 2, total: 3, message: "确认远程目录" });
+        this.setSyncProgress({ phase: "initializing", completed: 2, total: 3, message: t("plugin.progress.confirmRoot") });
         await client.ensureRemoteRoot();
       } else {
-        this.setSyncProgress({ phase: "initializing", completed: 2, total: 3, message: "检测远程能力" });
+        this.setSyncProgress({ phase: "initializing", completed: 2, total: 3, message: t("plugin.progress.probing") });
       }
       const probe = cachedCapabilities
         ? { ok: true as const, capabilities: cachedCapabilities }
         : await client.probeCapabilities();
-      this.setSyncProgress({ phase: "initializing", completed: 3, total: 3, message: "检测远程能力" });
+      this.setSyncProgress({ phase: "initializing", completed: 3, total: 3, message: t("plugin.progress.probing") });
       this.assertRunConfiguration(revision);
       this.capabilities = probe.capabilities;
       if (!probe.ok) {
         this.capabilityConfigKey = null;
-        throw new Error(probe.error?.message ?? "WebDAV 能力检测失败。");
+        throw new Error(probe.error?.message ?? t("plugin.error.probeFailed"));
       }
       this.capabilityConfigKey = capabilityKey;
       const headUpdateStrategy = probe.capabilities.headUpdateStrategy;
       if (!probe.capabilities.safeConcurrentWrites || !headUpdateStrategy) {
-        throw new Error("强制恢复需要安全的并发写入能力，以及经过验证的 HEAD 更新策略。");
+        throw new Error(t("plugin.error.forceRequirements"));
       }
       const engine = this.buildRepositoryEngine(
         client,
@@ -676,14 +681,14 @@ export default class WebDavSyncPlugin extends Plugin implements SettingsControll
         revision,
       );
       this.state.transitionTo("planning");
-      this.setSyncProgress({ phase: "planning", completed: 0, total: 1, message: "规划同步" });
+      this.setSyncProgress({ phase: "planning", completed: 0, total: 1, message: t("plugin.progress.planning") });
       let result: RepositorySyncResult = { status: "retry", state: this.syncSession };
       for (let attempt = 0; ; attempt += 1) {
         result = await engine.forceSync(this.syncSession, direction);
         if (result.status !== "retry") break;
         const retry = decideHeadReplanRetry(attempt, runSettings.headUpdateMaxRetries);
         if (!retry.shouldRetry) break;
-        this.log.warn("强制操作期间远程 HEAD 或同步锁已变化，正在重试。", {
+        this.log.warn(t("plugin.log.forceReplan"), {
           direction,
           retry: retry.retryNumber,
           maxRetries: retry.maxRetries,
@@ -695,10 +700,10 @@ export default class WebDavSyncPlugin extends Plugin implements SettingsControll
         this.assertRunConfiguration(revision);
       }
       if (result.status === "retry") {
-        throw new Error("远程 HEAD 或同步锁连续变化，强制操作未能完成。请确认其他设备已停止同步后重试。");
+        throw new Error(t("plugin.error.forceChurn"));
       }
       if (result.status === "conflict") {
-        throw new Error(`强制操作意外返回冲突：${describeConflictReason(result.reason)}。`);
+        throw new Error(t("plugin.error.forceConflict", { reason: describeConflictReason(result.reason) }));
       }
       this.syncSession = result.state;
       this.lastConflicts = [];
@@ -709,11 +714,11 @@ export default class WebDavSyncPlugin extends Plugin implements SettingsControll
         result.status,
         startedAt,
         0,
-        direction === "push-local" ? "已强制推送本地内容覆盖云端。" : "已强制拉取云端内容覆盖本地。",
+        direction === "push-local" ? t("plugin.history.forcedPush") : t("plugin.history.forcedPull"),
         result.status === "up-to-date" ? undefined : result.commitId,
       );
       await this.persistData();
-      this.log.info("强制恢复操作已完成。", {
+      this.log.info(t("plugin.log.forceCompleted"), {
         direction,
         ...(result.status === "up-to-date" ? {} : { commitId: result.commitId }),
       });
@@ -724,11 +729,11 @@ export default class WebDavSyncPlugin extends Plugin implements SettingsControll
       if (this.state.current !== "conflict" && this.state.canTransitionTo("error")) {
         this.state.transitionTo("error");
       }
-      this.log.error("强制恢复操作失败。", error);
+      this.log.error(t("plugin.log.forceFailed"), error);
       try {
         await this.persistData();
       } catch (persistError) {
-        this.log.error("无法保存同步历史。", persistError);
+        this.log.error(t("plugin.log.historyPersistFailed"), persistError);
       }
       throw error;
     }
@@ -807,7 +812,7 @@ export default class WebDavSyncPlugin extends Plugin implements SettingsControll
     password: string | null,
   ): WebDavClient {
     if (!password || !hasConnectionSettings(settings, password)) {
-      throw new Error("WebDAV 连接设置不完整。");
+      throw new Error(t("plugin.error.connectionIncomplete"));
     }
     return new WebDavClient(
       {
@@ -819,9 +824,9 @@ export default class WebDavSyncPlugin extends Plugin implements SettingsControll
         maxRetries: 2,
         onRetry: (info) => {
           const detail = info.reason === "network"
-            ? `网络错误：${redactLogText(info.error?.message ?? String(info.error))}`
-            : `HTTP ${info.status}`;
-          this.log.warn(`WebDAV ${info.method} 请求失败，正在重试（第 ${info.attempt} 次）。`, { detail });
+            ? t("plugin.log.retryDetail.network", { error: redactLogText(info.error?.message ?? String(info.error)) })
+            : t("plugin.log.retryDetail.http", { status: info.status ?? 0 });
+          this.log.warn(t("plugin.log.webdavRetry", { method: info.method, attempt: info.attempt }), { detail });
         },
       }),
     );
@@ -842,9 +847,9 @@ export default class WebDavSyncPlugin extends Plugin implements SettingsControll
   }
 
   private assertRunConfiguration(revision: number): void {
-    if (this.disposed) throw new Error("同步过程中 WebDAV 同步插件已被卸载。");
+    if (this.disposed) throw new Error(t("plugin.error.disposed"));
     if (revision !== this.configRevision) {
-      throw new Error("同步过程中 WebDAV 设置已改变，请使用新配置重新同步。");
+      throw new Error(t("plugin.error.settingsChanged"));
     }
   }
 
@@ -856,7 +861,7 @@ export default class WebDavSyncPlugin extends Plugin implements SettingsControll
         this.changes.enqueue({ kind: "modify", path: file.path, detectedAt });
       }
     }
-    this.log.info("知识库重新扫描完成，文件已加入检查队列。", { count: this.changes.size });
+    this.log.info(t("plugin.log.rescanDone"), { count: this.changes.size });
     this.updateStatusSurfaces();
   }
 
@@ -929,18 +934,19 @@ function describeState(
   pendingCount: number,
   progress: SyncProgress | null = null,
 ): { icon: string; text: string } {
-  if (state === "unconfigured") return { icon: "settings", text: "WebDAV：需要配置" };
-  if (state === "error") return { icon: "triangle-alert", text: "WebDAV：同步失败" };
-  if (state === "offline") return { icon: "cloud-off", text: "WebDAV：离线" };
-  if (state === "conflict") return { icon: "git-merge", text: "WebDAV：存在冲突" };
-  if (state === "paused") return { icon: "pause", text: "WebDAV：已暂停" };
+  const prefix = t("plugin.status.prefix");
+  if (state === "unconfigured") return { icon: "settings", text: prefix + t("plugin.status.unconfigured") };
+  if (state === "error") return { icon: "triangle-alert", text: prefix + t("plugin.status.failed") };
+  if (state === "offline") return { icon: "cloud-off", text: prefix + t("plugin.status.offline") };
+  if (state === "conflict") return { icon: "git-merge", text: prefix + t("plugin.status.conflict") };
+  if (state === "paused") return { icon: "pause", text: prefix + t("plugin.status.paused") };
   if (state !== "idle") {
     const label = progress?.message ?? describeSyncState(state);
     const suffix = progress ? ` ${formatProgressPercent(progress)}%` : "";
-    return { icon: "refresh-cw", text: `WebDAV：${label}${suffix}` };
+    return { icon: "refresh-cw", text: `${prefix}${label}${suffix}` };
   }
-  if (pendingCount > 0) return { icon: "cloud-upload", text: `WebDAV：${pendingCount} 项待同步` };
-  return { icon: "cloud-check", text: "WebDAV：已就绪" };
+  if (pendingCount > 0) return { icon: "cloud-upload", text: prefix + t("plugin.status.pending", { count: pendingCount }) };
+  return { icon: "cloud-check", text: prefix + t("plugin.status.ready") };
 }
 
 function syncStateForProgress(progress: SyncProgress): SyncState {
@@ -963,60 +969,60 @@ function sleep(milliseconds: number): Promise<void> {
 }
 
 function describeHeadUpdateStrategy(strategy: HeadUpdateStrategy): string {
-  if (strategy === "etag") return "强 ETag 比较并交换";
-  if (strategy === "move-lock") return "原子 MOVE 租约锁";
-  if (strategy === "mkcol-lock") return "排他 MKCOL 租约锁";
-  return "无可用策略";
+  if (strategy === "etag") return t("plugin.headStrategy.etag");
+  if (strategy === "move-lock") return t("plugin.headStrategy.moveLock");
+  if (strategy === "mkcol-lock") return t("plugin.headStrategy.mkcolLock");
+  return t("plugin.headStrategy.none");
 }
 
 function describeSyncState(state: SyncState): string {
-  const labels: Record<SyncState, string> = {
-    unconfigured: "需要配置",
-    idle: "空闲",
-    scanning: "正在扫描知识库",
-    "checking-remote": "正在检查远程仓库",
-    planning: "正在规划同步",
-    uploading: "正在上传",
-    downloading: "正在下载",
-    merging: "正在合并",
-    applying: "正在应用远程更改",
-    "updating-head": "正在更新远程 HEAD",
-    paused: "已暂停",
-    offline: "离线",
-    conflict: "存在冲突",
-    error: "发生错误",
+  const keys: Record<SyncState, MessageKey> = {
+    unconfigured: "plugin.syncState.unconfigured",
+    idle: "plugin.syncState.idle",
+    scanning: "plugin.syncState.scanning",
+    "checking-remote": "plugin.syncState.checking-remote",
+    planning: "plugin.syncState.planning",
+    uploading: "plugin.syncState.uploading",
+    downloading: "plugin.syncState.downloading",
+    merging: "plugin.syncState.merging",
+    applying: "plugin.syncState.applying",
+    "updating-head": "plugin.syncState.updating-head",
+    paused: "plugin.syncState.paused",
+    offline: "plugin.syncState.offline",
+    conflict: "plugin.syncState.conflict",
+    error: "plugin.syncState.error",
   };
-  return labels[state];
+  return t(keys[state]);
 }
 
 function describeSyncResultStatus(status: RepositorySyncResult["status"]): string {
-  const labels: Record<RepositorySyncResult["status"], string> = {
-    "up-to-date": "已经是最新状态",
-    pushed: "已推送本地更改",
-    pulled: "已拉取远程更改",
-    merged: "已完成合并",
-    retry: "需要重试",
-    conflict: "存在冲突",
+  const keys: Record<RepositorySyncResult["status"], MessageKey> = {
+    "up-to-date": "plugin.syncResult.up-to-date",
+    pushed: "plugin.syncResult.pushed",
+    pulled: "plugin.syncResult.pulled",
+    merged: "plugin.syncResult.merged",
+    retry: "plugin.syncResult.retry",
+    conflict: "plugin.syncResult.conflict",
   };
-  return labels[status];
+  return t(keys[status]);
 }
 
 function describeConflictReason(
   reason: Extract<RepositorySyncResult, { status: "conflict" }>["reason"],
 ): string {
-  const labels: Record<
+  const keys: Record<
     Extract<RepositorySyncResult, { status: "conflict" }>["reason"],
-    string
+    MessageKey
   > = {
-    "initial-both-nonempty": "首次连接时本地和远程都包含不同内容",
-    "remote-reset": "远程仓库历史已被重置",
-    "repository-mismatch": "当前设备绑定了另一个远程仓库",
-    "history-diverged": "本地基线与远程历史已经分叉",
-    "pending-apply-local-change": "中断恢复期间检测到新的本地编辑",
-    "mass-delete": "本次操作包含大量删除",
-    "tree-conflict": "文件树存在无法自动处理的冲突",
+    "initial-both-nonempty": "plugin.conflictReason.initial-both-nonempty",
+    "remote-reset": "plugin.conflictReason.remote-reset",
+    "repository-mismatch": "plugin.conflictReason.repository-mismatch",
+    "history-diverged": "plugin.conflictReason.history-diverged",
+    "pending-apply-local-change": "plugin.conflictReason.pending-apply-local-change",
+    "mass-delete": "plugin.conflictReason.mass-delete",
+    "tree-conflict": "plugin.conflictReason.tree-conflict",
   };
-  return labels[reason];
+  return t(keys[reason]);
 }
 
 function connectionConfigKey(settings: WebDavSyncSettings): string {

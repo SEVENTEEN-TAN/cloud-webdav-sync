@@ -1,6 +1,7 @@
 import { App, ConfirmationModal, Modal, Notice } from "obsidian";
 import type { CommitHistoryEntry } from "../repository";
 import type { SyncState } from "../core";
+import { matchesMessage, t, type MessageKey } from "../i18n";
 import type { LogEntry, SyncHistoryEntry } from "../logging";
 import type { ConflictChoice, PendingChange } from "../sync";
 import type { WebDavCapabilities } from "../webdav";
@@ -39,13 +40,13 @@ export interface SyncCenterController {
 type SyncCenterTab = "overview" | "pending" | "versions" | "history" | "logs" | "capabilities";
 type LogFilter = "all" | LogEntry["level"];
 
-const TABS: readonly { id: SyncCenterTab; label: string }[] = [
-  { id: "overview", label: "概览" },
-  { id: "pending", label: "待同步" },
-  { id: "versions", label: "版本" },
-  { id: "history", label: "历史" },
-  { id: "logs", label: "日志" },
-  { id: "capabilities", label: "能力" },
+const TABS: readonly { id: SyncCenterTab; labelKey: MessageKey }[] = [
+  { id: "overview", labelKey: "syncCenter.tab.overview" },
+  { id: "pending", labelKey: "syncCenter.tab.pending" },
+  { id: "versions", labelKey: "syncCenter.tab.versions" },
+  { id: "history", labelKey: "syncCenter.tab.history" },
+  { id: "logs", labelKey: "syncCenter.tab.logs" },
+  { id: "capabilities", labelKey: "syncCenter.tab.capabilities" },
 ];
 
 export class SyncCenterModal extends Modal {
@@ -59,7 +60,7 @@ export class SyncCenterModal extends Modal {
   }
 
   onOpen(): void {
-    this.setTitle("WebDAV 同步中心");
+    this.setTitle(t("syncCenter.title"));
     this.modalEl.addClass("webdav-sync-center-modal");
     this.render();
   }
@@ -90,17 +91,21 @@ export class SyncCenterModal extends Modal {
     state.createSpan({ text: stateDescription(snapshot) });
 
     const metrics = header.createDiv({ cls: "webdav-sync-center-metrics" });
-    this.createMetric(metrics, "待同步", String(snapshot.pending.length));
-    this.createMetric(metrics, "冲突", String(snapshot.conflicts.length));
-    this.createMetric(metrics, "真实同步", snapshot.realSyncEnabled ? "已开启" : "仅规划");
+    this.createMetric(metrics, t("syncCenter.metric.pending"), String(snapshot.pending.length));
+    this.createMetric(metrics, t("syncCenter.metric.conflicts"), String(snapshot.conflicts.length));
+    this.createMetric(
+      metrics,
+      t("syncCenter.metric.realSync"),
+      snapshot.realSyncEnabled ? t("syncCenter.metric.realSyncOn") : t("syncCenter.metric.realSyncPlanning"),
+    );
 
     const actions = header.createDiv({ cls: "webdav-sync-center-actions" });
     const primary = actions.createEl("button", {
       text: snapshot.conflicts.length > 0
-        ? `处理 ${snapshot.conflicts.length} 个冲突`
+        ? t("syncCenter.action.resolveConflicts", { count: snapshot.conflicts.length })
         : snapshot.pendingApply
-          ? "继续中断的应用"
-          : "立即检查",
+          ? t("syncCenter.action.resumeApply")
+          : t("syncCenter.action.checkNow"),
       cls: "mod-cta",
     });
     primary.addEventListener("click", () => {
@@ -113,37 +118,37 @@ export class SyncCenterModal extends Modal {
       void this.controller.runManualSync()
         .then(() => this.render())
         .catch((error: unknown) => {
-          new Notice(`WebDAV 检查失败：${formatError(error)}`, 10_000);
+          new Notice(t("syncCenter.notice.checkFailed", { error: formatError(error) }), 10_000);
           this.render();
         });
     });
 
-    const copyButton = actions.createEl("button", { text: "复制诊断" });
+    const copyButton = actions.createEl("button", { text: t("syncCenter.action.copyDiagnostics") });
     copyButton.addEventListener("click", () => {
       copyButton.disabled = true;
       void this.controller.copyDiagnostics()
-        .then(() => new Notice("已复制 WebDAV 同步诊断信息。"))
-        .catch((error: unknown) => new Notice(`无法复制诊断信息：${formatError(error)}`))
+        .then(() => new Notice(t("syncCenter.notice.diagnosticsCopied")))
+        .catch((error: unknown) => new Notice(t("syncCenter.notice.copyFailed", { error: formatError(error) })))
         .finally(() => { copyButton.disabled = false; });
     });
 
-    const clearButton = actions.createEl("button", { text: "清除历史和日志" });
+    const clearButton = actions.createEl("button", { text: t("syncCenter.action.clearHistory") });
     clearButton.addEventListener("click", () => {
       void confirmAction(
         this.app,
-        "清除历史和日志",
-        "将永久删除本设备保存的同步历史记录，并清空运行日志。云端仓库与本地笔记不受影响。",
-        "清除",
+        t("syncCenter.confirm.clearHistoryTitle"),
+        t("syncCenter.confirm.clearHistoryBody"),
+        t("syncCenter.confirm.clear"),
       ).then((confirmed) => {
         if (!confirmed) return;
         clearButton.disabled = true;
         void this.controller.clearHistoryAndLogs()
           .then(() => {
-            new Notice("已清除同步历史与运行日志。");
+            new Notice(t("syncCenter.notice.historyCleared"));
             this.render();
           })
           .catch((error: unknown) => {
-            new Notice(`清除历史和日志失败：${formatError(error)}`, 10_000);
+            new Notice(t("syncCenter.notice.clearHistoryFailed", { error: formatError(error) }), 10_000);
             clearButton.disabled = false;
           });
       });
@@ -160,7 +165,7 @@ export class SyncCenterModal extends Modal {
     const tabs = this.contentEl.createDiv({ cls: "webdav-sync-tabs", attr: { role: "tablist" } });
     for (const tab of TABS) {
       const button = tabs.createEl("button", {
-        text: tab.label,
+        text: t(tab.labelKey),
         cls: tab.id === this.activeTab ? "is-active" : undefined,
         attr: { role: "tab", "aria-selected": String(tab.id === this.activeTab) },
       });
@@ -174,24 +179,24 @@ export class SyncCenterModal extends Modal {
   private renderOverview(container: HTMLElement, snapshot: SyncCenterSnapshot): void {
     const section = container.createDiv({ cls: "webdav-sync-section" });
     const latest = snapshot.history.at(-1);
-    section.createEl("h3", { text: "同步概览" });
+    section.createEl("h3", { text: t("syncCenter.overview.title") });
     section.createEl("p", {
       text: snapshot.realSyncEnabled
-        ? "已启用真实同步。插件会在提交前校验远程状态，并在冲突时暂停后续自动同步。"
-        : "当前为仅规划模式：会检查远程仓库和生成同步计划，但不会改动本地或远程内容。",
+        ? t("syncCenter.overview.realSyncDesc")
+        : t("syncCenter.overview.planningDesc"),
     });
 
     if (isHeadLockRetryFailure(snapshot, latest)) {
       const callout = section.createDiv({ cls: "webdav-sync-callout is-warning" });
-      callout.createEl("strong", { text: "远程 HEAD 或同步锁连续变化" });
-      callout.createSpan({ text: "请先确认其他设备已经停止同步；确认后可以清除远程锁并立即重试。" });
-      const button = callout.createEl("button", { text: "清除锁并重试", cls: "mod-warning" });
+      callout.createEl("strong", { text: t("syncCenter.callout.headChurnTitle") });
+      callout.createSpan({ text: t("syncCenter.callout.headChurnBody") });
+      const button = callout.createEl("button", { text: t("syncCenter.action.clearLockRetry"), cls: "mod-warning" });
       button.addEventListener("click", () => {
         void confirmAction(
           this.app,
-          "清除远程同步锁",
-          "请仅在其他所有设备均已停止同步后继续。清除锁后将立即重新运行同步检查。",
-          "清除锁并重试",
+          t("syncCenter.confirm.clearLockTitle"),
+          t("syncCenter.confirm.clearLockBody"),
+          t("syncCenter.action.clearLockRetry"),
         ).then((confirmed) => {
           if (!confirmed) return;
           button.disabled = true;
@@ -199,7 +204,7 @@ export class SyncCenterModal extends Modal {
             .then(() => this.controller.runManualSync())
             .then(() => this.render())
             .catch((error: unknown) => {
-              new Notice(`清除锁或重试失败：${formatError(error)}`, 10_000);
+              new Notice(t("syncCenter.notice.clearLockFailed", { error: formatError(error) }), 10_000);
               this.render();
             });
         });
@@ -209,9 +214,9 @@ export class SyncCenterModal extends Modal {
     if (snapshot.conflicts.length > 0) {
       const callout = section.createDiv({ cls: "webdav-sync-callout is-error" });
       const resolved = snapshot.conflicts.filter(({ choice }) => choice !== undefined).length;
-      callout.createEl("strong", { text: `有 ${snapshot.conflicts.length} 个冲突需要处理` });
-      callout.createSpan({ text: `已选择 ${resolved} 个版本；请在冲突解决工作台中完成剩余处理。` });
-      const button = callout.createEl("button", { text: "处理冲突", cls: "mod-cta" });
+      callout.createEl("strong", { text: t("syncCenter.callout.conflictsTitle", { count: snapshot.conflicts.length }) });
+      callout.createSpan({ text: t("syncCenter.callout.conflictsBody", { resolved }) });
+      const button = callout.createEl("button", { text: t("syncCenter.action.resolve"), cls: "mod-cta" });
       button.addEventListener("click", () => {
         this.controller.openConflictResolver();
         this.close();
@@ -224,36 +229,38 @@ export class SyncCenterModal extends Modal {
 
     if (snapshot.pendingApply) {
       const callout = section.createDiv({ cls: "webdav-sync-callout is-warning" });
-      callout.createEl("strong", { text: "可继续上次中断的远程更改应用" });
-      callout.createSpan({ text: `目标提交：${snapshot.pendingApply.targetCommitId.slice(0, 12)}…` });
+      callout.createEl("strong", { text: t("syncCenter.callout.pendingApplyTitle") });
+      callout.createSpan({
+        text: t("syncCenter.callout.pendingApplyBody", { commitId: snapshot.pendingApply.targetCommitId.slice(0, 12) }),
+      });
     }
 
     if (snapshot.capabilities && !snapshot.capabilities.safeConcurrentWrites) {
       const callout = section.createDiv({ cls: "webdav-sync-callout is-warning" });
-      callout.createEl("strong", { text: "远程服务器尚未证明可安全并发写入" });
-      callout.createSpan({ text: "请在“能力”页查看 WebDAV 检测结果和警告。" });
+      callout.createEl("strong", { text: t("syncCenter.callout.capabilitiesTitle") });
+      callout.createSpan({ text: t("syncCenter.callout.capabilitiesBody") });
     }
 
     const recent = section.createDiv({ cls: "webdav-sync-overview-detail" });
-    recent.createSpan({ text: "最近一次同步" });
+    recent.createSpan({ text: t("syncCenter.overview.latest") });
     recent.createEl("strong", {
       text: latest
         ? `${formatHistoryOutcome(latest.outcome)} · ${new Date(latest.finishedAt).toLocaleString()}`
-        : "尚无记录",
+        : t("syncCenter.overview.noHistory"),
     });
   }
 
   private renderRecoveryActions(section: HTMLElement, realSyncEnabled: boolean): void {
     const recovery = section.createDiv({ cls: "webdav-sync-callout" });
-    recovery.createEl("strong", { text: "冲突无法逐个解决时的强制恢复操作" });
+    recovery.createEl("strong", { text: t("syncCenter.recovery.title") });
     recovery.createSpan({
       text: realSyncEnabled
-        ? "强制推送会用本地库内容完全替换云端（云端多出的文件将被删除）；强制拉取会用云端内容完全替换本地（本地多出的文件移入 .trash）。两者都会跳过大量删除保护和历史分叉检查；旧提交可能仍保存在云端，但版本列表只展示当前 HEAD 可达的提交。"
-        : "当前处于仅规划模式。请先在设置中启用“实际同步”，才能执行会改动本地或云端内容的强制恢复操作。",
+        ? t("syncCenter.recovery.desc")
+        : t("syncCenter.recovery.descPlanning"),
     });
     const actions = recovery.createDiv({ cls: "webdav-sync-recovery-actions" });
-    const pushButton = actions.createEl("button", { text: "强制推送本地到云端", cls: "mod-warning" });
-    const pullButton = actions.createEl("button", { text: "强制拉取云端到本地", cls: "mod-warning" });
+    const pushButton = actions.createEl("button", { text: t("syncCenter.action.forcePush"), cls: "mod-warning" });
+    const pullButton = actions.createEl("button", { text: t("syncCenter.action.forcePull"), cls: "mod-warning" });
     pushButton.disabled = !realSyncEnabled;
     pullButton.disabled = !realSyncEnabled;
     const runForced = (direction: "push" | "pull") => {
@@ -265,16 +272,16 @@ export class SyncCenterModal extends Modal {
       void request
         .then(() => this.render())
         .catch((error: unknown) => {
-          new Notice(`强制恢复失败：${formatError(error)}`, 10_000);
+          new Notice(t("syncCenter.notice.forceFailed", { error: formatError(error) }), 10_000);
           this.render();
         });
     };
     pushButton.addEventListener("click", () => {
       void confirmAction(
         this.app,
-        "强制推送本地到云端",
-        "云端仓库内容将被本地库完全替换：云端多出的文件会被删除，本地版本覆盖同名文件。此操作会跳过大量删除保护和历史分叉检查；已提交的历史版本仍保留在仓库中。确定继续？",
-        "强制推送",
+        t("syncCenter.action.forcePush"),
+        t("syncCenter.confirm.forcePushBody"),
+        t("syncCenter.confirm.forcePush"),
       ).then((confirmed) => {
         if (confirmed) runForced("push");
       });
@@ -282,9 +289,9 @@ export class SyncCenterModal extends Modal {
     pullButton.addEventListener("click", () => {
       void confirmAction(
         this.app,
-        "强制拉取云端到本地",
-        "本地库将被云端仓库内容完全替换：本地多出的文件将移入 .trash，未推送的本地修改会丢失。确定继续？",
-        "强制拉取",
+        t("syncCenter.action.forcePull"),
+        t("syncCenter.confirm.forcePullBody"),
+        t("syncCenter.confirm.forcePull"),
       ).then((confirmed) => {
         if (confirmed) runForced("pull");
       });
@@ -293,13 +300,13 @@ export class SyncCenterModal extends Modal {
 
   private renderVersions(container: HTMLElement): void {
     const section = container.createDiv({ cls: "webdav-sync-section" });
-    section.createEl("h3", { text: "云端提交历史" });
+    section.createEl("h3", { text: t("syncCenter.versions.title") });
     section.createEl("p", {
-      text: "每次同步都会在云端仓库生成一条不可变提交，类似 Git。这里只读取并列出最近从当前 HEAD 可达的提交；不可达旧提交和恢复快照不会显示，且尚未提供历史回滚。",
+      text: t("syncCenter.versions.desc"),
       cls: "webdav-sync-muted",
     });
     const refresh = section.createEl("button", {
-      text: this.loadingCommitHistory ? "正在加载提交历史…" : "刷新提交历史",
+      text: this.loadingCommitHistory ? t("syncCenter.versions.loading") : t("syncCenter.versions.refresh"),
     });
     refresh.disabled = this.loadingCommitHistory;
     refresh.addEventListener("click", () => {
@@ -311,7 +318,7 @@ export class SyncCenterModal extends Modal {
         })
         .catch((error: unknown) => {
           this.commitHistory = null;
-          new Notice(`无法加载提交历史：${formatError(error)}`, 10_000);
+          new Notice(t("syncCenter.versions.loadFailed", { error: formatError(error) }), 10_000);
         })
         .finally(() => {
           this.loadingCommitHistory = false;
@@ -321,13 +328,13 @@ export class SyncCenterModal extends Modal {
 
     if (this.commitHistory === null) {
       section.createEl("p", {
-        text: "尚未加载提交历史。点击“刷新提交历史”从云端仓库读取。",
+        text: t("syncCenter.versions.empty"),
         cls: "webdav-sync-empty",
       });
       return;
     }
     if (this.commitHistory.length === 0) {
-      section.createEl("p", { text: "云端仓库还没有任何提交。", cls: "webdav-sync-empty" });
+      section.createEl("p", { text: t("syncCenter.versions.noCommits"), cls: "webdav-sync-empty" });
       return;
     }
     const list = section.createEl("ul", { cls: "webdav-sync-list webdav-sync-commit-list" });
@@ -337,23 +344,27 @@ export class SyncCenterModal extends Modal {
       title.createEl("strong", { text: entry.commitId.slice(0, 12) });
       title.createSpan({ text: new Date(entry.createdAt).toLocaleString() });
       item.createDiv({ cls: "webdav-sync-commit-meta", text:
-        `设备 ${entry.deviceId} · ${entry.fileCount} 个文件 · 父提交 ${entry.parents.map((parent) => parent.slice(0, 8)).join(", ") || "无"}` });
+        t("syncCenter.versions.meta", {
+          deviceId: entry.deviceId,
+          fileCount: entry.fileCount,
+          parents: entry.parents.map((parent) => parent.slice(0, 8)).join(", ") || t("syncCenter.versions.noParents"),
+        }) });
     }
   }
 
   private renderPending(container: HTMLElement, pending: readonly PendingChange[]): void {
     const section = container.createDiv({ cls: "webdav-sync-section" });
-    section.createEl("h3", { text: "待同步的本地更改" });
-    section.createEl("p", { text: "队列会自动合并连续的新建、修改、删除和重命名事件。", cls: "webdav-sync-muted" });
+    section.createEl("h3", { text: t("syncCenter.pending.title") });
+    section.createEl("p", { text: t("syncCenter.pending.desc"), cls: "webdav-sync-muted" });
     if (pending.length === 0) {
-      section.createEl("p", { text: "当前没有待同步的本地更改。", cls: "webdav-sync-empty" });
+      section.createEl("p", { text: t("syncCenter.pending.empty"), cls: "webdav-sync-empty" });
       return;
     }
     const list = section.createEl("ul", { cls: "webdav-sync-list webdav-sync-change-list" });
     for (const change of pending) {
       const item = list.createEl("li");
       const label = change.kind === "rename"
-        ? `重命名：${change.previousPath} → ${change.path}`
+        ? t("syncCenter.pending.rename", { from: change.previousPath, to: change.path })
         : `${formatPendingChangeKind(change.kind)}：${change.path}`;
       item.createEl("strong", { text: label });
       item.createSpan({ text: new Date(change.detectedAt).toLocaleTimeString() });
@@ -362,9 +373,9 @@ export class SyncCenterModal extends Modal {
 
   private renderHistory(container: HTMLElement, history: readonly SyncHistoryEntry[]): void {
     const section = container.createDiv({ cls: "webdav-sync-section" });
-    section.createEl("h3", { text: "同步历史" });
+    section.createEl("h3", { text: t("syncCenter.history.title") });
     if (history.length === 0) {
-      section.createEl("p", { text: "尚无已完成的同步记录。", cls: "webdav-sync-empty" });
+      section.createEl("p", { text: t("syncCenter.history.empty"), cls: "webdav-sync-empty" });
       return;
     }
     const list = section.createEl("ul", { cls: "webdav-sync-list webdav-sync-history-list" });
@@ -380,11 +391,11 @@ export class SyncCenterModal extends Modal {
 
   private renderLogs(container: HTMLElement, logs: readonly LogEntry[]): void {
     const section = container.createDiv({ cls: "webdav-sync-section" });
-    section.createEl("h3", { text: "运行日志" });
+    section.createEl("h3", { text: t("syncCenter.logs.title") });
     const filters = section.createDiv({ cls: "webdav-sync-log-filters" });
     for (const filter of ["all", "info", "warn", "error"] as const) {
       const button = filters.createEl("button", {
-        text: filter === "all" ? "全部" : formatLogLevel(filter),
+        text: filter === "all" ? t("syncCenter.logs.filter.all") : formatLogLevel(filter),
         cls: filter === this.logFilter ? "is-active" : undefined,
       });
       button.addEventListener("click", () => {
@@ -398,7 +409,7 @@ export class SyncCenterModal extends Modal {
       .slice(-100)
       .reverse();
     if (visible.length === 0) {
-      section.createEl("p", { text: "当前筛选条件下没有日志。", cls: "webdav-sync-empty" });
+      section.createEl("p", { text: t("syncCenter.logs.empty"), cls: "webdav-sync-empty" });
       return;
     }
     const list = section.createEl("ul", { cls: "webdav-sync-list webdav-sync-log-list" });
@@ -412,25 +423,25 @@ export class SyncCenterModal extends Modal {
 
   private renderCapabilities(container: HTMLElement, capabilities: WebDavCapabilities | null): void {
     const section = container.createDiv({ cls: "webdav-sync-section" });
-    section.createEl("h3", { text: "WebDAV 能力" });
+    section.createEl("h3", { text: t("syncCenter.capabilities.title") });
     if (!capabilities) {
-      section.createEl("p", { text: "尚未完成连接能力检测。请在设置页点击“测试连接”，或运行一次同步检查。", cls: "webdav-sync-empty" });
+      section.createEl("p", { text: t("syncCenter.capabilities.empty"), cls: "webdav-sync-empty" });
       return;
     }
 
     const summary = section.createDiv({ cls: capabilities.safeConcurrentWrites ? "webdav-sync-callout is-success" : "webdav-sync-callout is-warning" });
-    summary.createEl("strong", { text: capabilities.safeConcurrentWrites ? "已验证可安全并发写入" : "尚未验证可安全并发写入" });
-    summary.createSpan({ text: `HEAD 更新策略：${formatHeadUpdateStrategy(capabilities.headUpdateStrategy)}` });
+    summary.createEl("strong", { text: capabilities.safeConcurrentWrites ? t("syncCenter.capabilities.safe") : t("syncCenter.capabilities.unsafe") });
+    summary.createSpan({ text: t("syncCenter.capabilities.headStrategy", { strategy: formatHeadUpdateStrategy(capabilities.headUpdateStrategy) }) });
 
     if (capabilities.warnings.length > 0) {
       const warnings = section.createDiv({ cls: "webdav-sync-capability-warnings" });
-      warnings.createEl("h4", { text: "警告" });
+      warnings.createEl("h4", { text: t("syncCenter.capabilities.warnings") });
       const list = warnings.createEl("ul", { cls: "webdav-sync-list" });
       for (const warning of capabilities.warnings) list.createEl("li", { text: formatCapabilityWarning(warning), cls: "is-warning" });
     }
 
     const details = section.createEl("details", { cls: "webdav-sync-capability-details" });
-    details.createEl("summary", { text: "查看检测明细" });
+    details.createEl("summary", { text: t("syncCenter.capabilities.details") });
     const list = details.createEl("ul", { cls: "webdav-sync-list" });
     for (const [label, value] of capabilityRows(capabilities)) list.createEl("li", { text: `${label}：${yesNo(value)}` });
   }
@@ -438,123 +449,126 @@ export class SyncCenterModal extends Modal {
 
 function capabilityRows(capabilities: WebDavCapabilities): readonly [string, boolean][] {
   return [
-    ["可访问", capabilities.reachable],
-    ["条件创建", capabilities.conditionalCreate],
-    ["强 ETag", capabilities.strongEtag],
-    ["条件更新", capabilities.conditionalUpdate],
-    ["过期 ETag 被拒绝", capabilities.staleEtagRejected],
-    ["原子 MOVE 禁止覆盖", capabilities.atomicMoveNoOverwrite],
-    ["排他 MKCOL", capabilities.atomicCollectionCreate],
-    ["临时资源已清理", capabilities.cleanupSucceeded],
+    [t("syncCenter.capabilityRow.reachable"), capabilities.reachable],
+    [t("syncCenter.capabilityRow.conditionalCreate"), capabilities.conditionalCreate],
+    [t("syncCenter.capabilityRow.strongEtag"), capabilities.strongEtag],
+    [t("syncCenter.capabilityRow.conditionalUpdate"), capabilities.conditionalUpdate],
+    [t("syncCenter.capabilityRow.staleEtagRejected"), capabilities.staleEtagRejected],
+    [t("syncCenter.capabilityRow.atomicMoveNoOverwrite"), capabilities.atomicMoveNoOverwrite],
+    [t("syncCenter.capabilityRow.atomicCollectionCreate"), capabilities.atomicCollectionCreate],
+    [t("syncCenter.capabilityRow.cleanupSucceeded"), capabilities.cleanupSucceeded],
   ];
 }
 
 function stateDescription(snapshot: SyncCenterSnapshot): string {
-  if (snapshot.conflicts.length > 0) return "同步已暂停，等待处理冲突。";
-  if (snapshot.pendingApply) return "检测到可恢复的中断应用。";
-  if (snapshot.pending.length > 0) return "检测到本地更改，等待下一次同步。";
-  return snapshot.realSyncEnabled ? "仓库状态已准备就绪。" : "当前处于仅规划模式。";
+  if (snapshot.conflicts.length > 0) return t("syncCenter.stateDescription.conflict");
+  if (snapshot.pendingApply) return t("syncCenter.stateDescription.apply");
+  if (snapshot.pending.length > 0) return t("syncCenter.stateDescription.pending");
+  return snapshot.realSyncEnabled
+    ? t("syncCenter.stateDescription.ready")
+    : t("syncCenter.stateDescription.readyPlanning");
 }
 
 export function formatSyncState(state: SyncState): string {
-  const labels: Record<SyncState, string> = {
-    unconfigured: "未配置",
-    idle: "空闲",
-    scanning: "正在扫描",
-    "checking-remote": "正在检查远程端",
-    planning: "正在生成同步计划",
-    uploading: "正在上传",
-    downloading: "正在下载",
-    merging: "正在合并",
-    applying: "正在应用更改",
-    "updating-head": "正在更新远程 HEAD",
-    paused: "已暂停",
-    offline: "离线",
-    conflict: "存在冲突",
-    error: "错误",
+  const keys: Record<SyncState, MessageKey> = {
+    unconfigured: "syncCenter.syncState.unconfigured",
+    idle: "syncCenter.syncState.idle",
+    scanning: "syncCenter.syncState.scanning",
+    "checking-remote": "syncCenter.syncState.checking-remote",
+    planning: "syncCenter.syncState.planning",
+    uploading: "syncCenter.syncState.uploading",
+    downloading: "syncCenter.syncState.downloading",
+    merging: "syncCenter.syncState.merging",
+    applying: "syncCenter.syncState.applying",
+    "updating-head": "syncCenter.syncState.updating-head",
+    paused: "syncCenter.syncState.paused",
+    offline: "syncCenter.syncState.offline",
+    conflict: "syncCenter.syncState.conflict",
+    error: "syncCenter.syncState.error",
   };
-  return labels[state];
+  return t(keys[state]);
 }
 
 export function formatConflictAction(action: string): string {
-  const labels: Record<string, string> = {
-    "repository-mismatch": "仓库标识不匹配",
-    "remote-reset": "远程仓库已重置",
-    "mass-delete": "触发大量删除保护",
-    "initial-both-nonempty": "首次同步时本地与远程均有文件",
-    "history-diverged": "同步历史已分叉",
-    "tree-conflict": "文件树冲突",
-    "pending-apply-local-change": "恢复中断操作时检测到本地修改",
-    "markdown-overlap": "Markdown 内容重叠冲突",
-    "conflict-add-add": "本地与远程同时新增",
-    "conflict-delete-modify": "删除与修改冲突",
+  const keys: Record<string, MessageKey> = {
+    "repository-mismatch": "syncCenter.conflictAction.repository-mismatch",
+    "remote-reset": "syncCenter.conflictAction.remote-reset",
+    "mass-delete": "syncCenter.conflictAction.mass-delete",
+    "initial-both-nonempty": "syncCenter.conflictAction.initial-both-nonempty",
+    "history-diverged": "syncCenter.conflictAction.history-diverged",
+    "tree-conflict": "syncCenter.conflictAction.tree-conflict",
+    "pending-apply-local-change": "syncCenter.conflictAction.pending-apply-local-change",
+    "markdown-overlap": "syncCenter.conflictAction.markdown-overlap",
+    "conflict-add-add": "syncCenter.conflictAction.conflict-add-add",
+    "conflict-delete-modify": "syncCenter.conflictAction.conflict-delete-modify",
   };
-  return labels[action] ?? action;
+  const key = keys[action];
+  return key ? t(key) : action;
 }
 
 function formatHistoryOutcome(outcome: SyncHistoryEntry["outcome"]): string {
-  const labels: Record<SyncHistoryEntry["outcome"], string> = {
-    planned: "已生成计划",
-    "up-to-date": "已是最新",
-    pushed: "已推送",
-    pulled: "已拉取",
-    merged: "已合并",
-    conflict: "冲突",
-    error: "错误",
+  const keys: Record<SyncHistoryEntry["outcome"], MessageKey> = {
+    planned: "syncCenter.history.outcome.planned",
+    "up-to-date": "syncCenter.history.outcome.up-to-date",
+    pushed: "syncCenter.history.outcome.pushed",
+    pulled: "syncCenter.history.outcome.pulled",
+    merged: "syncCenter.history.outcome.merged",
+    conflict: "syncCenter.history.outcome.conflict",
+    error: "syncCenter.history.outcome.error",
   };
-  return labels[outcome];
+  return t(keys[outcome]);
 }
 
 function formatLogLevel(level: LogEntry["level"]): string {
-  const labels: Record<LogEntry["level"], string> = {
-    debug: "调试",
-    info: "信息",
-    warn: "警告",
-    error: "错误",
+  const keys: Record<LogEntry["level"], MessageKey> = {
+    debug: "syncCenter.logs.level.debug",
+    info: "syncCenter.logs.level.info",
+    warn: "syncCenter.logs.level.warn",
+    error: "syncCenter.logs.level.error",
   };
-  return labels[level];
+  return t(keys[level]);
 }
 
 function formatPendingChangeKind(kind: Exclude<PendingChange["kind"], "rename">): string {
-  const labels: Record<Exclude<PendingChange["kind"], "rename">, string> = {
-    create: "新建",
-    modify: "修改",
-    delete: "删除",
+  const keys: Record<Exclude<PendingChange["kind"], "rename">, MessageKey> = {
+    create: "syncCenter.pending.kind.create",
+    modify: "syncCenter.pending.kind.modify",
+    delete: "syncCenter.pending.kind.delete",
   };
-  return labels[kind];
+  return t(keys[kind]);
 }
 
 function formatHeadUpdateStrategy(strategy: WebDavCapabilities["headUpdateStrategy"]): string {
-  if (strategy === "etag") return "ETag 比较并交换";
-  if (strategy === "move-lock") return "MOVE 排他锁";
-  if (strategy === "mkcol-lock") return "MKCOL 排他锁";
-  return "无";
+  if (strategy === "etag") return t("syncCenter.strategy.etag");
+  if (strategy === "move-lock") return t("syncCenter.strategy.moveLock");
+  if (strategy === "mkcol-lock") return t("syncCenter.strategy.mkcolLock");
+  return t("syncCenter.strategy.none");
 }
 
 function formatCapabilityWarning(warning: string): string {
-  const exactWarnings: Record<string, string> = {
-    "The server did not expose an ETag for uploaded files.": "服务器没有为已上传文件提供 ETag。",
-    "The server only exposed a weak ETag.": "服务器仅提供弱 ETag。",
+  const exactWarnings: Record<string, MessageKey> = {
+    "The server did not expose an ETag for uploaded files.": "syncCenter.capabilityWarning.noEtag",
+    "The server only exposed a weak ETag.": "syncCenter.capabilityWarning.weakEtag",
   };
   const exact = exactWarnings[warning];
-  if (exact) return exact;
+  if (exact) return t(exact);
   let match = /^The server did not safely enforce If-None-Match: \* \(HTTP (\d+)\)\.$/.exec(warning);
-  if (match) return `服务器未安全执行 If-None-Match: * 条件（HTTP ${match[1]}）。`;
+  if (match) return t("syncCenter.capabilityWarning.noConditionalCreate", { code: match[1] ?? warning });
   match = /^Conditional update returned HTTP (\d+)\.$/.exec(warning);
-  if (match) return `条件更新返回 HTTP ${match[1]}。`;
+  if (match) return t("syncCenter.capabilityWarning.conditionalUpdate", { code: match[1] ?? warning });
   match = /^The server accepted a stale ETag update with HTTP (\d+)\.$/.exec(warning);
-  if (match) return `服务器错误接受了使用过期 ETag 的更新（HTTP ${match[1]}）。`;
+  if (match) return t("syncCenter.capabilityWarning.staleEtagAccepted", { code: match[1] ?? warning });
   match = /^Concurrent MKCOL did not prove exclusive lock creation \((.+)\)\.$/.exec(warning);
-  if (match) return `并发 MKCOL 未能证明锁创建具有排他性（${match[1]}）。`;
+  if (match) return t("syncCenter.capabilityWarning.mkcolNotExclusive", { sequence: match[1] ?? warning });
   match = /^Concurrent MOVE with Overwrite: F did not prove exclusive destination creation \((.+)\)\.$/.exec(warning);
-  if (match) return `使用 Overwrite: F 的并发 MOVE 未能证明目标创建具有排他性（${match[1]}）。`;
+  if (match) return t("syncCenter.capabilityWarning.moveNotExclusive", { sequence: match[1] ?? warning });
   match = /^Could not remove the temporary capability probe (.+)\.$/.exec(warning);
-  if (match) return `无法删除临时能力检测目录 ${match[1]}。`;
+  if (match) return t("syncCenter.capabilityWarning.probeCleanup", { path: match[1] ?? warning });
   return warning;
 }
 
 function yesNo(value: boolean): string {
-  return value ? "是" : "否";
+  return value ? t("syncCenter.common.yes") : t("syncCenter.common.no");
 }
 
 function isHeadLockRetryFailure(
@@ -562,7 +576,9 @@ function isHeadLockRetryFailure(
   latest: SyncHistoryEntry | undefined,
 ): boolean {
   if (snapshot.state !== "error" || latest?.outcome !== "error") return false;
-  return latest.message.includes("远程 HEAD") || latest.message.includes("同步锁");
+  return matchesMessage("plugin.error.headChurn", latest.message) ||
+    latest.message.includes("远程 HEAD") ||
+    latest.message.includes("同步锁");
 }
 
 function formatError(error: unknown): string {
@@ -575,7 +591,7 @@ function confirmAction(app: App, title: string, message: string, confirmText: st
     const modal = new ConfirmationModal(app)
       .setTitle(title)
       .setContent(message)
-      .addCancelButton("取消")
+      .addCancelButton(t("common.cancel"))
       .addButton((button) => button
         .setButtonText(confirmText)
         .setDestructive()

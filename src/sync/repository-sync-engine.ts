@@ -1,4 +1,5 @@
 import { mapLimitWeighted } from "../concurrency";
+import { t } from "../i18n";
 import { mergeMarkdown, type MarkdownMergeConflict } from "../merge/markdown-diff3";
 import { planTreeSync, type TreePlanItem } from "../planning";
 import {
@@ -140,9 +141,9 @@ export class RepositorySyncEngine {
     resolutions: ConflictResolutionMap = {},
   ): Promise<RepositorySyncResult> {
     this.assertSafePoint();
-    this.reportProgress({ phase: "initializing", completed: 0, total: 1, message: "初始化远程仓库" });
+    this.reportProgress({ phase: "initializing", completed: 0, total: 1, message: t("plugin.progress.initRepo") });
     const metadata = await this.repository.initialize(this.now());
-    this.reportProgress({ phase: "initializing", completed: 1, total: 1, message: "初始化远程仓库" });
+    this.reportProgress({ phase: "initializing", completed: 1, total: 1, message: t("plugin.progress.initRepo") });
     this.assertSafePoint();
     if (state.repositoryId && state.repositoryId !== metadata.repositoryId) {
       return { status: "conflict", state, reason: "repository-mismatch" };
@@ -152,22 +153,22 @@ export class RepositorySyncEngine {
     }
     const head = await this.repository.readHead();
     const localTree = await this.scanWorkspace();
-    this.reportProgress({ phase: "planning", completed: 0, total: 1, message: "规划同步" });
+    this.reportProgress({ phase: "planning", completed: 0, total: 1, message: t("plugin.progress.planning") });
 
     if (head.reference.commit === null) {
       if (state.baseCommitId !== null) return { status: "conflict", state, reason: "remote-reset" };
       if (Object.keys(localTree).length === 0) {
-        this.reportProgress({ phase: "planning", completed: 1, total: 1, message: "规划同步" });
+        this.reportProgress({ phase: "planning", completed: 1, total: 1, message: t("plugin.progress.planning") });
         return { status: "up-to-date", state: { ...state, repositoryId: metadata.repositoryId } };
       }
-      this.reportProgress({ phase: "planning", completed: 1, total: 1, message: "规划同步" });
+      this.reportProgress({ phase: "planning", completed: 1, total: 1, message: t("plugin.progress.planning") });
       return this.pushTree(state, metadata.repositoryId, head.etag, head.reference.generation, localTree, [], {});
     }
 
     const remoteCommit = await this.repository.readCommit(head.reference.commit);
     if (state.baseCommitId === null) {
       if (Object.keys(localTree).length === 0) {
-        this.reportProgress({ phase: "planning", completed: 1, total: 1, message: "规划同步" });
+        this.reportProgress({ phase: "planning", completed: 1, total: 1, message: t("plugin.progress.planning") });
         return this.applyCommit(
           "pulled",
           state,
@@ -178,7 +179,7 @@ export class RepositorySyncEngine {
         );
       }
       if (sameTree(localTree, remoteCommit.files)) {
-        this.reportProgress({ phase: "planning", completed: 1, total: 1, message: "规划同步" });
+        this.reportProgress({ phase: "planning", completed: 1, total: 1, message: t("plugin.progress.planning") });
         return {
           status: "up-to-date",
           state: { ...state, repositoryId: metadata.repositoryId, baseCommitId: remoteCommit.commitId },
@@ -188,7 +189,7 @@ export class RepositorySyncEngine {
         if (isMassDelete(localTree, remoteCommit.files)) {
           return { status: "conflict", state, reason: "mass-delete" };
         }
-        this.reportProgress({ phase: "planning", completed: 1, total: 1, message: "规划同步" });
+        this.reportProgress({ phase: "planning", completed: 1, total: 1, message: t("plugin.progress.planning") });
         const sourceCommitId = await this.writeLocalRecoverySnapshot(
           metadata.repositoryId,
           state.deviceId,
@@ -204,7 +205,7 @@ export class RepositorySyncEngine {
         );
       }
       if (this.initialSyncPolicy === "prefer-local") {
-        this.reportProgress({ phase: "planning", completed: 1, total: 1, message: "规划同步" });
+        this.reportProgress({ phase: "planning", completed: 1, total: 1, message: t("plugin.progress.planning") });
         return this.pushTree(
           state,
           metadata.repositoryId,
@@ -226,17 +227,17 @@ export class RepositorySyncEngine {
       return { status: "conflict", state, reason: "history-diverged" };
     }
 
-    this.reportProgress({ phase: "planning", completed: 1, total: 1, message: "规划同步" });
+    this.reportProgress({ phase: "planning", completed: 1, total: 1, message: t("plugin.progress.planning") });
 
     if (!localChanged && !remoteChanged) {
-      this.reportProgress({ phase: "planning", completed: 1, total: 1, message: "规划同步" });
+      this.reportProgress({ phase: "planning", completed: 1, total: 1, message: t("plugin.progress.planning") });
       return { status: "up-to-date", state: { ...state, repositoryId: metadata.repositoryId } };
     }
     if (!localChanged) {
       if (isMassDelete(localTree, remoteCommit.files)) {
         return { status: "conflict", state, reason: "mass-delete" };
       }
-      this.reportProgress({ phase: "planning", completed: 1, total: 1, message: "规划同步" });
+      this.reportProgress({ phase: "planning", completed: 1, total: 1, message: t("plugin.progress.planning") });
       return this.applyCommit(
         "pulled",
         state,
@@ -247,7 +248,7 @@ export class RepositorySyncEngine {
       );
     }
     if (!remoteChanged) {
-      this.reportProgress({ phase: "planning", completed: 1, total: 1, message: "规划同步" });
+      this.reportProgress({ phase: "planning", completed: 1, total: 1, message: t("plugin.progress.planning") });
       return this.pushTree(
         state,
         metadata.repositoryId,
@@ -276,13 +277,13 @@ export class RepositorySyncEngine {
     direction: ForceSyncDirection,
   ): Promise<RepositorySyncResult> {
     this.assertSafePoint();
-    this.reportProgress({ phase: "initializing", completed: 0, total: 1, message: "初始化远程仓库" });
+    this.reportProgress({ phase: "initializing", completed: 0, total: 1, message: t("plugin.progress.initRepo") });
     const metadata = await this.repository.initialize(this.now());
-    this.reportProgress({ phase: "initializing", completed: 1, total: 1, message: "初始化远程仓库" });
+    this.reportProgress({ phase: "initializing", completed: 1, total: 1, message: t("plugin.progress.initRepo") });
     this.assertSafePoint();
     const head = await this.repository.readHead();
     const localTree = await this.scanWorkspace();
-    this.reportProgress({ phase: "planning", completed: 0, total: 1, message: "规划同步" });
+    this.reportProgress({ phase: "planning", completed: 0, total: 1, message: t("plugin.progress.planning") });
     if (direction === "pull-remote") {
       return this.forcePullRemote(state, metadata.repositoryId, head, localTree);
     }
@@ -299,7 +300,7 @@ export class RepositorySyncEngine {
     const baseline = parentCommitId
       ? (await this.repository.readCommit(parentCommitId)).files
       : {};
-    this.reportProgress({ phase: "planning", completed: 1, total: 1, message: "规划同步" });
+    this.reportProgress({ phase: "planning", completed: 1, total: 1, message: t("plugin.progress.planning") });
     return this.pushTree(
       state,
       repositoryId,
@@ -322,7 +323,7 @@ export class RepositorySyncEngine {
       throw new Error("The remote repository is empty, so there is nothing to force pull.");
     }
     const remoteCommit = await this.repository.readCommit(head.reference.commit);
-    this.reportProgress({ phase: "planning", completed: 1, total: 1, message: "规划同步" });
+    this.reportProgress({ phase: "planning", completed: 1, total: 1, message: t("plugin.progress.planning") });
     const sourceCommitId = await this.writeLocalRecoverySnapshot(
       repositoryId,
       state.deviceId,
@@ -333,18 +334,18 @@ export class RepositorySyncEngine {
 
   private async scanWorkspace(): Promise<RepositoryTree> {
     let reported = false;
-    this.reportProgress({ phase: "scanning", completed: 0, total: 1, message: "扫描知识库" });
+    this.reportProgress({ phase: "scanning", completed: 0, total: 1, message: t("plugin.progress.scanVault") });
     const tree = await this.workspace.scan((completed, total) => {
       reported = true;
       this.reportProgress({
         phase: "scanning",
         completed: total > 0 ? completed : 1,
         total: Math.max(total, 1),
-        message: "扫描知识库",
+        message: t("plugin.progress.scanVault"),
       });
     });
     if (!reported) {
-      this.reportProgress({ phase: "scanning", completed: 1, total: 1, message: "扫描知识库" });
+      this.reportProgress({ phase: "scanning", completed: 1, total: 1, message: t("plugin.progress.scanVault") });
     }
     return tree;
   }
@@ -364,16 +365,16 @@ export class RepositorySyncEngine {
     }
     await this.uploadChangedBlobs(tree, baseline, new Map());
     const commit = await this.createCommit(repositoryId, state.deviceId, parents, tree);
-    this.reportProgress({ phase: "uploading", completed: 0, total: 1, message: "上传提交记录" });
+    this.reportProgress({ phase: "uploading", completed: 0, total: 1, message: t("plugin.progress.uploadCommit") });
     await this.repository.writeCommit(commit);
-    this.reportProgress({ phase: "uploading", completed: 1, total: 1, message: "上传提交记录" });
+    this.reportProgress({ phase: "uploading", completed: 1, total: 1, message: t("plugin.progress.uploadCommit") });
     this.assertSafePoint();
-    this.reportProgress({ phase: "updating-head", completed: 0, total: 1, message: "更新远程 HEAD" });
+    this.reportProgress({ phase: "updating-head", completed: 0, total: 1, message: t("plugin.progress.updateHead") });
     const update = await this.repository.compareAndSwapHead(headEtag, {
       commit: commit.commitId,
       generation: generation + 1,
     });
-    this.reportProgress({ phase: "updating-head", completed: 1, total: 1, message: "更新远程 HEAD" });
+    this.reportProgress({ phase: "updating-head", completed: 1, total: 1, message: t("plugin.progress.updateHead") });
     return update.updated
       ? this.completed("pushed", state, repositoryId, commit.commitId)
       : { status: "retry", state };
@@ -405,7 +406,7 @@ export class RepositorySyncEngine {
     const markdownConflictVersions = Object.create(null) as Record<string, MarkdownConflictVersions>;
     let mergedItems = 0;
     const mergeTotal = Math.max(plan.length, 1);
-    this.reportProgress({ phase: "merging", completed: 0, total: mergeTotal, message: "合并更改" });
+    this.reportProgress({ phase: "merging", completed: 0, total: mergeTotal, message: t("plugin.progress.merge") });
 
     for (const item of plan) {
       try {
@@ -451,13 +452,13 @@ export class RepositorySyncEngine {
           phase: "merging",
           completed: mergedItems,
           total: mergeTotal,
-          message: "合并更改",
+          message: t("plugin.progress.merge"),
         });
       }
     }
 
     if (plan.length === 0) {
-      this.reportProgress({ phase: "merging", completed: 1, total: 1, message: "合并更改" });
+      this.reportProgress({ phase: "merging", completed: 1, total: 1, message: t("plugin.progress.merge") });
     }
 
     if (Object.keys(markdownConflicts).length > 0) {
@@ -477,9 +478,9 @@ export class RepositorySyncEngine {
 
     await this.uploadChangedBlobs(localTree, base.files, new Map());
     const localCommit = await this.createCommit(repositoryId, state.deviceId, [base.commitId], localTree);
-    this.reportProgress({ phase: "uploading", completed: 0, total: 1, message: "上传本地提交" });
+    this.reportProgress({ phase: "uploading", completed: 0, total: 1, message: t("plugin.progress.uploadLocalCommit") });
     await this.repository.writeCommit(localCommit);
-    this.reportProgress({ phase: "uploading", completed: 1, total: 1, message: "上传本地提交" });
+    this.reportProgress({ phase: "uploading", completed: 1, total: 1, message: t("plugin.progress.uploadLocalCommit") });
     await this.uploadChangedBlobs(mergedTree, remote.files, mergedData);
     const mergeCommit = await this.createCommit(
       repositoryId,
@@ -487,17 +488,17 @@ export class RepositorySyncEngine {
       [remote.commitId, localCommit.commitId],
       mergedTree,
     );
-    this.reportProgress({ phase: "uploading", completed: 0, total: 1, message: "上传合并提交" });
+    this.reportProgress({ phase: "uploading", completed: 0, total: 1, message: t("plugin.progress.uploadMergeCommit") });
     await this.repository.writeCommit(mergeCommit);
-    this.reportProgress({ phase: "uploading", completed: 1, total: 1, message: "上传合并提交" });
+    this.reportProgress({ phase: "uploading", completed: 1, total: 1, message: t("plugin.progress.uploadMergeCommit") });
 
     this.assertSafePoint();
-    this.reportProgress({ phase: "updating-head", completed: 0, total: 1, message: "更新远程 HEAD" });
+    this.reportProgress({ phase: "updating-head", completed: 0, total: 1, message: t("plugin.progress.updateHead") });
     const update = await this.repository.compareAndSwapHead(headEtag, {
       commit: mergeCommit.commitId,
       generation: generation + 1,
     });
-    this.reportProgress({ phase: "updating-head", completed: 1, total: 1, message: "更新远程 HEAD" });
+    this.reportProgress({ phase: "updating-head", completed: 1, total: 1, message: t("plugin.progress.updateHead") });
     if (!update.updated) return { status: "retry", state };
     return this.applyCommit(
       "merged",
@@ -567,9 +568,9 @@ export class RepositorySyncEngine {
   ): Promise<string> {
     await this.uploadChangedBlobs(tree, {}, new Map());
     const commit = await this.createCommit(repositoryId, deviceId, [], tree);
-    this.reportProgress({ phase: "uploading", completed: 0, total: 1, message: "上传本地恢复快照" });
+    this.reportProgress({ phase: "uploading", completed: 0, total: 1, message: t("plugin.progress.uploadSnapshot") });
     await this.repository.writeCommit(commit);
-    this.reportProgress({ phase: "uploading", completed: 1, total: 1, message: "上传本地恢复快照" });
+    this.reportProgress({ phase: "uploading", completed: 1, total: 1, message: t("plugin.progress.uploadSnapshot") });
     return commit.commitId;
   }
 
@@ -596,11 +597,11 @@ export class RepositorySyncEngine {
     let completed = 0;
     const reportUploaded = () => {
       completed += 1;
-      this.reportProgress({ phase: "uploading", completed, total, message: "上传文件内容" });
+      this.reportProgress({ phase: "uploading", completed, total, message: t("plugin.progress.uploadBlobs") });
     };
-    this.reportProgress({ phase: "uploading", completed, total, message: "上传文件内容" });
+    this.reportProgress({ phase: "uploading", completed, total, message: t("plugin.progress.uploadBlobs") });
     if (paths.length === 0) {
-      this.reportProgress({ phase: "uploading", completed: 1, total: 1, message: "上传文件内容" });
+      this.reportProgress({ phase: "uploading", completed: 1, total: 1, message: t("plugin.progress.uploadBlobs") });
       return;
     }
     const packedPaths = paths.filter((path) => this.repository.shouldPackBlob(ownEntry(tree, path)?.size ?? 0));
@@ -675,11 +676,11 @@ export class RepositorySyncEngine {
     let applied = 0;
     const reportApplied = () => {
       applied += 1;
-      this.reportProgress({ phase: "applying", completed: applied, total: applyTotal, message: "应用远程更改" });
+      this.reportProgress({ phase: "applying", completed: applied, total: applyTotal, message: t("plugin.progress.applyRemote") });
     };
-    this.reportProgress({ phase: "applying", completed: 0, total: applyTotal, message: "应用远程更改" });
+    this.reportProgress({ phase: "applying", completed: 0, total: applyTotal, message: t("plugin.progress.applyRemote") });
     if (applyTotal === 1 && earlyDeletes.length + foldersToRemove.size + writes.length + remainingDeletes.length === 0) {
-      this.reportProgress({ phase: "applying", completed: 1, total: 1, message: "应用远程更改" });
+      this.reportProgress({ phase: "applying", completed: 1, total: 1, message: t("plugin.progress.applyRemote") });
       return;
     }
 

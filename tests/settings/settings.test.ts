@@ -46,6 +46,15 @@ test("bounds transfer concurrency to a safe range", () => {
   );
 });
 
+test("defaults the interface language to auto and keeps valid choices", () => {
+  assert.equal(DEFAULT_SETTINGS.language, "auto");
+  assert.equal(normalizeSettings({}).language, "auto");
+  assert.equal(normalizeSettings({ language: "zh-CN" }).language, "zh-CN");
+  assert.equal(normalizeSettings({ language: "en" }).language, "en");
+  assert.equal(normalizeSettings({ language: "french" }).language, "auto");
+  assert.equal(normalizeSettings({ language: 42 }).language, "auto");
+});
+
 test("requires all connection fields and a non-empty secret", () => {
   const settings = normalizeSettings({
     serverUrl: "https://dav.example.com",

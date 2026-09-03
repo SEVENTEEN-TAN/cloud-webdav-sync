@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import { createBasicAuthHeader } from "./auth";
 import type {
   CapabilityProbeResult,
@@ -75,7 +76,7 @@ export class WebDavClient {
       const existing = await this.requestFromServerRoot(current, "HEAD");
       if (isSuccessful(existing.status)) continue;
       if (existing.status !== 404) {
-        throw new Error(`检查远程目录 ${current} 时，WebDAV 返回了 HTTP ${existing.status}。`);
+        throw new Error(t("webdav.error.checkRoot", { path: current, status: existing.status }));
       }
 
       const created = await this.requestFromServerRoot(current, "MKCOL");
@@ -84,7 +85,7 @@ export class WebDavClient {
         const afterContention = await this.requestFromServerRoot(current, "HEAD");
         if (isSuccessful(afterContention.status)) continue;
       }
-      throw new Error(`无法创建远程目录 ${current}：WebDAV 返回了 HTTP ${created.status}。`);
+      throw new Error(t("webdav.error.createRoot", { path: current, status: created.status }));
     }
   }
 

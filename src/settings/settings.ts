@@ -1,4 +1,5 @@
 import type { InitialSyncPolicy } from "../sync";
+import { isLanguageSetting, type LanguageSetting } from "../i18n";
 import { isAllowedWebDavServerUrl } from "../webdav/url";
 
 export const PASSWORD_SECRET_ID = "webdav-sync-password";
@@ -17,6 +18,7 @@ export interface WebDavSyncSettings {
   transferConcurrency: number;
   initialSyncPolicy: InitialSyncPolicy;
   excludedFolders: string[];
+  language: LanguageSetting;
 }
 
 export const DEFAULT_SETTINGS: Readonly<WebDavSyncSettings> = Object.freeze({
@@ -33,6 +35,7 @@ export const DEFAULT_SETTINGS: Readonly<WebDavSyncSettings> = Object.freeze({
   transferConcurrency: 4,
   initialSyncPolicy: "stop",
   excludedFolders: [],
+  language: "auto",
 });
 
 export function normalizeSettings(value: unknown): WebDavSyncSettings {
@@ -54,6 +57,7 @@ export function normalizeSettings(value: unknown): WebDavSyncSettings {
     transferConcurrency: readTransferConcurrency(input.transferConcurrency),
     initialSyncPolicy: readInitialSyncPolicy(input.initialSyncPolicy),
     excludedFolders: readExcludedFolders(input.excludedFolders),
+    language: isLanguageSetting(input.language) ? input.language : DEFAULT_SETTINGS.language,
   };
 }
 
