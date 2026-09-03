@@ -122,9 +122,13 @@
 
 .webdav-sync-center-actions {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   justify-content: flex-end;
   gap: var(--size-4-2);
+}
+
+.webdav-sync-center-actions button {
+  white-space: nowrap;
 }
 
 .webdav-sync-tabs {
