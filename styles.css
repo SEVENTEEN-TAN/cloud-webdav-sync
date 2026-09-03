@@ -78,6 +78,9 @@
 .webdav-sync-center-header {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "state metrics"
+    "actions actions";
   gap: var(--size-4-3);
   align-items: start;
   padding: var(--size-4-3);
@@ -87,6 +90,7 @@
 }
 
 .webdav-sync-center-state {
+  grid-area: state;
   display: grid;
   gap: var(--size-4-1);
 }
@@ -102,6 +106,7 @@
 }
 
 .webdav-sync-center-metrics {
+  grid-area: metrics;
   display: flex;
   flex-wrap: wrap;
   gap: var(--size-4-2);
@@ -121,10 +126,12 @@
 }
 
 .webdav-sync-center-actions {
+  grid-area: actions;
   display: flex;
   flex-wrap: nowrap;
   justify-content: flex-end;
   gap: var(--size-4-2);
+  min-width: 0;
 }
 
 .webdav-sync-center-actions button {
@@ -521,6 +528,10 @@
 @media (max-width: 900px) {
   .webdav-sync-center-header {
     grid-template-columns: 1fr;
+    grid-template-areas:
+      "state"
+      "metrics"
+      "actions";
   }
 
   .webdav-sync-center-actions {
@@ -537,6 +548,12 @@
     max-height: 16rem;
     border-right: 0;
     border-bottom: 1px solid var(--background-modifier-border);
+  }
+}
+
+@media (max-width: 480px) {
+  .webdav-sync-center-actions {
+    flex-wrap: wrap;
   }
 }
 
